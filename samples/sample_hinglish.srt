@@ -1,0 +1,19 @@
+1
+00:00:00,500 --> 00:00:08,419
+[HOST]: Welcome back to PodcastAI! Aaj hum baat kar rahe hain ek super exciting topic par: Indian Voice AI ka ground reality.
+
+2
+00:00:08,769 --> 00:00:17,870
+[GUEST]: Exactly Rohan! Pehle lagta tha ki speech synthesis sirf robotic announcements ke liye hai, but Sarvam ke Bulbul models ne poora game change kar diya hai.
+
+3
+00:00:18,170 --> 00:00:26,750
+[HOST]: Right! Aur sabse fascinating baat yeh hai ki ye natural code-mixing aur Indian accents ko itne smoothly pronounce karta hai.
+
+4
+00:00:27,149 --> 00:00:35,359
+[GUEST]: Definitely. Ab content creators multi-speaker podcasts kisi bhi Indian language mein minutes mein scale kar sakte hain.
+
+5
+00:00:35,710 --> 00:00:42,469
+[HOST]: That is incredible! Agle episode mein milte hain ek aur deep dive ke sath, only on PodcastAI.

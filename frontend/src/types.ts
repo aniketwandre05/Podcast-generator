@@ -49,6 +49,7 @@ export interface Episode {
   topic: string;
   source_type: string;
   language: string;
+  dialogue_style?: string;
   tone: string;
   target_duration_mins: number;
   speakers_config: SpeakerConfig[];

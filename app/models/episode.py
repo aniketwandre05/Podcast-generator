@@ -15,6 +15,7 @@ class Episode(Base):
     source_content = Column(Text, default="")
     
     language = Column(String(20), default="en-IN")
+    dialogue_style = Column(String(50), default="code_mixed") # code_mixed, native, english_indian, bilingual
     tone = Column(String(50), default="casual") # casual, educational, debate, interview, storytelling, news-brief
     target_duration_mins = Column(Integer, default=5)
     audience_level = Column(String(50), default="general")

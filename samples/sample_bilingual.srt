@@ -1,0 +1,19 @@
+1
+00:00:00,500 --> 00:00:06,290
+[HOST]: Welcome to PodcastAI! Today we are exploring how cross-lingual dialogue is transforming digital communication in India.
+
+2
+00:00:06,639 --> 00:00:15,419
+[GUEST]: नमस्ते शुभ! बहुत खुशी हुई यहाँ आकर। भारत में भाषा की विविधता इतनी समृद्ध है कि बहुभाषी तकनीक की वाकई बहुत ज़रूरत है।
+
+3
+00:00:15,720 --> 00:00:23,269
+[HOST]: Absolutely Dev. When a host speaks in English and guests respond in Hindi or regional languages, audiences connect on a whole new level.
+
+4
+00:00:23,670 --> 00:00:29,839
+[GUEST]: बिल्कुल! सर्वम एआई और बुलबुल जैसी तकनीकों से अब यह बिल्कुल आसान और स्वाभाविक हो गया है।
+
+5
+00:00:30,190 --> 00:00:34,969
+[HOST]: Thank you for joining us today, Dev! Listeners, make sure to tune in next week for more breakthroughs.

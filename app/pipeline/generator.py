@@ -92,6 +92,7 @@ async def run_full_podcast_pipeline(episode_id: str):
         target_duration_mins = ep.target_duration_mins
         audience_level = ep.audience_level
         language = ep.language
+        dialogue_style = getattr(ep, "dialogue_style", "code_mixed") or "code_mixed"
         background_music = ep.background_music
         music_volume = ep.music_volume
 
@@ -137,6 +138,7 @@ async def run_full_podcast_pipeline(episode_id: str):
             audience_level=audience_level,
             speakers=speakers,
             language=language,
+            dialogue_style=dialogue_style,
         )
 
         db = SessionLocal()
@@ -161,6 +163,7 @@ async def run_full_podcast_pipeline(episode_id: str):
             speakers=speakers,
             tone=tone,
             language=language,
+            dialogue_style=dialogue_style,
             on_progress=on_script_progress,
         )
 

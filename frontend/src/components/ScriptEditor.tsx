@@ -30,7 +30,11 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({ episode, onBack, onU
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [translateOpen, setTranslateOpen] = useState(false);
   const [targetLang, setTargetLang] = useState('hi-IN');
+  const [translateMode, setTranslateMode] = useState('modern-colloquial');
+  const [updateSpeakers, setUpdateSpeakers] = useState(true);
   const [isTranslating, setIsTranslating] = useState(false);
+  const [activeTurnTranslate, setActiveTurnTranslate] = useState<{ segIdx: number; turnIdx: number } | null>(null);
+  const [turnTranslating, setTurnTranslating] = useState(false);
 
   const speakerIds = episode.speakers_config?.map((s) => s.speaker_id) || ['HOST', 'GUEST'];
 
@@ -43,6 +47,41 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({ episode, onBack, onU
     setScript(updated);
   };
 
+  const handleTranslateSingleTurn = async (segIdx: number, turnIdx: number, targetLanguage: string) => {
+    const turn = script.segments[segIdx].turns[turnIdx];
+    if (!turn.text.trim()) return;
+
+    setTurnTranslating(true);
+    try {
+      const res = await fetch('/api/episodes/translate-turn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: turn.text,
+          source_language_code: turn.language_code || episode.language,
+          target_language_code: targetLanguage,
+          mode: translateMode,
+        }),
+      });
+      const data = await res.json();
+      if (data.translated_text) {
+        const updated = { ...script };
+        updated.segments[segIdx].turns[turnIdx] = {
+          ...updated.segments[segIdx].turns[turnIdx],
+          text: data.translated_text,
+          language_code: targetLanguage,
+        };
+        setScript(updated);
+        setActiveTurnTranslate(null);
+      }
+    } catch (e) {
+      console.error('Failed to translate turn', e);
+      alert('Failed to translate turn');
+    } finally {
+      setTurnTranslating(false);
+    }
+  };
+
   const handleAddTurn = (segIdx: number) => {
     const updated = { ...script };
     updated.segments[segIdx].turns.push({
@@ -50,6 +89,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({ episode, onBack, onU
       text: 'New line of dialogue...',
       emotion: 'natural',
       pause_after_ms: 350,
+      language_code: episode.language,
     });
     setScript(updated);
   };
@@ -105,7 +145,11 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({ episode, onBack, onU
       const res = await fetch(`/api/episodes/${episode.id}/translate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target_language_code: targetLang, mode: 'modern-colloquial' }),
+        body: JSON.stringify({
+          target_language_code: targetLang,
+          mode: translateMode,
+          update_speakers: updateSpeakers,
+        }),
       });
       if (res.ok) {
         setTranslateOpen(false);
@@ -213,7 +257,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({ episode, onBack, onU
                   className="p-3.5 bg-slate-950 border border-slate-800/80 rounded-xl hover:border-slate-700 transition-colors"
                 >
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <select
                         value={turn.speaker}
                         onChange={(e) => handleTurnChange(segIdx, turnIdx, 'speaker', e.target.value)}
@@ -226,13 +270,70 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({ episode, onBack, onU
                         ))}
                       </select>
 
+                      <select
+                        value={turn.language_code || episode.language}
+                        onChange={(e) => handleTurnChange(segIdx, turnIdx, 'language_code', e.target.value)}
+                        className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-md text-[11px] text-slate-300 font-medium"
+                        title="Turn Language"
+                      >
+                        {LANGUAGES.map((l) => (
+                          <option key={l.code} value={l.code}>
+                            {l.code.split('-')[0].toUpperCase()} - {l.name.split(' ')[0]}
+                          </option>
+                        ))}
+                      </select>
+
                       <input
                         type="text"
                         value={turn.emotion || ''}
                         onChange={(e) => handleTurnChange(segIdx, turnIdx, 'emotion', e.target.value)}
-                        placeholder="Emotion tag"
-                        className="w-24 px-2 py-0.5 bg-slate-900 border border-slate-800 rounded-md text-[11px] text-slate-400"
+                        placeholder="Emotion"
+                        className="w-20 px-2 py-0.5 bg-slate-900 border border-slate-800 rounded-md text-[11px] text-slate-400"
                       />
+
+                      {/* Quick Translate Button */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (activeTurnTranslate?.segIdx === segIdx && activeTurnTranslate?.turnIdx === turnIdx) {
+                              setActiveTurnTranslate(null);
+                            } else {
+                              setActiveTurnTranslate({ segIdx, turnIdx });
+                            }
+                          }}
+                          className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-purple-500/15 text-purple-300 border border-purple-500/30 hover:bg-purple-500/25 flex items-center space-x-1"
+                          title="Quick Translate Turn"
+                        >
+                          <Languages className="h-3 w-3" />
+                          <span>Translate</span>
+                        </button>
+
+                        {/* Mini Popover */}
+                        {activeTurnTranslate?.segIdx === segIdx && activeTurnTranslate?.turnIdx === turnIdx && (
+                          <div className="absolute left-0 mt-1 w-48 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-30">
+                            <div className="text-[10px] font-bold text-slate-400 uppercase mb-1 px-1">Translate Line To:</div>
+                            <div className="max-h-36 overflow-y-auto space-y-0.5">
+                              {LANGUAGES.map((l) => (
+                                <button
+                                  key={l.code}
+                                  disabled={turnTranslating}
+                                  onClick={() => handleTranslateSingleTurn(segIdx, turnIdx, l.code)}
+                                  className="w-full text-left px-2 py-1 text-xs rounded hover:bg-indigo-600 hover:text-white text-slate-300 flex items-center justify-between"
+                                >
+                                  <span>{l.name.split(' ')[0]}</span>
+                                  <span className="text-[10px] text-slate-400">{l.code.split('-')[0].toUpperCase()}</span>
+                                </button>
+                              ))}
+                            </div>
+                            {turnTranslating && (
+                              <div className="flex items-center justify-center p-1 text-[11px] text-purple-400">
+                                <Loader2 className="h-3 w-3 animate-spin mr-1" /> Translating...
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center space-x-3 text-xs">
@@ -294,20 +395,49 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({ episode, onBack, onU
               Localize the entire episode dialogue into another Indian language using Sarvam Mayura Translate, then automatically re-synthesize audio.
             </p>
 
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              Target Language
-            </label>
-            <select
-              value={targetLang}
-              onChange={(e) => setTargetLang(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm mb-6"
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                  Target Language
+                </label>
+                <select
+                  value={targetLang}
+                  onChange={(e) => setTargetLang(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm"
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                  Translation Mode
+                </label>
+                <select
+                  value={translateMode}
+                  onChange={(e) => setTranslateMode(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm"
+                >
+                  <option value="modern-colloquial">Modern Colloquial (Natural podcast vernacular)</option>
+                  <option value="code-mixed">Code-Mixed (Hinglish/Tanglish blend)</option>
+                  <option value="formal">Formal / Classic (Standard literary)</option>
+                </select>
+              </div>
+
+              <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={updateSpeakers}
+                  onChange={(e) => setUpdateSpeakers(e.target.checked)}
+                  className="rounded bg-slate-950 border-slate-800 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>Update speaker voice languages to target language</span>
+              </label>
+            </div>
 
             <div className="flex items-center justify-end space-x-3">
               <button

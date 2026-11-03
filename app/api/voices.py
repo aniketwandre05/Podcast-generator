@@ -44,6 +44,20 @@ LANGUAGES = [
     {"code": "od-IN", "name": "Odia (ଓଡ଼ିଆ)"},
 ]
 
+LANGUAGE_PREVIEW_TEXTS = {
+    "en-IN": "Welcome to PodcastAI! This is a preview of my voice powered by Sarvam Bulbul.",
+    "hi-IN": "नमस्ते! पॉडकास्ट एआई में आपका स्वागत है। यह बुलबुल की आवाज़ का प्रीव्यू है।",
+    "bn-IN": "নমস্কার! পডকাস্ট এআই-তে আপনাদের স্বাগত। এটি বুলবুল কণ্ঠস্বরের প্রিভিউ।",
+    "ta-IN": "வணக்கம்! போட்காஸ்ட் ஏஐ-க்கு உங்களை வரவேற்கிறோம். இது புல்புல் குரலின் முன்னோட்டம்.",
+    "te-IN": "నమస్కారం! పాడ్‌కాస్ట్ ఏఐకి స్వాగతం. ఇది బుల్‌బుల్ స్వర ప్రివ్యూ.",
+    "kn-IN": "ನಮಸ್ಕಾರ! ಪಾಡ್‌ಕ್ಯಾಸ್ಟ್ ಎಐಗೆ ಸುಸ್ವಾಗತ. ಇದು ಬುಲ್‌ಬುಲ್ ಧ್ವನಿಯ ಪ್ರಿವ್ಯೂ ಆಗಿದೆ.",
+    "ml-IN": "നമസ്കാരം! പോഡ്‌കാസ്റ്റ് എഐയിലേക്ക് സ്വാഗതം. ഇത് ബുൾബുൾ ശബ്ദത്തിന്റെ പ്രിവ്യൂ ആണ്.",
+    "mr-IN": "नमस्कार! पॉडकास्ट एआय मध्ये आपले स्वागत आहे. हा बुलबुल आवाजाचा प्रिव्ह्यू आहे.",
+    "gu-IN": "નમસ્તે! પોડકાસ્ટ એઆઈમાં આપનું સ્વાગત છે. આ બુલબુલ અવાજનું પ્રિવ્યુ છે.",
+    "pa-IN": "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ! ਪੋਡਕਾਸਟ ਏਆਈ ਵਿੱਚ ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ। ਇਹ ਬੁਲਬੁਲ ਆਵਾਜ਼ ਦਾ ਪ੍ਰੀਵਿਊ ਹੈ।",
+    "od-IN": "ନମସ୍କାର! ପଡକାଷ୍ଟ ଏଆଇକୁ ଆପଣଙ୍କୁ ସ୍ୱାଗତ। ଏହା ବୁଲବୁଲ କଣ୍ଠସ୍ୱରର ଏକ ଝଲକ।",
+}
+
 class VoiceProfileCreate(BaseModel):
     name: str
     voice_id: str
@@ -62,12 +76,8 @@ def get_voices():
 
 @router.post("/voices/preview")
 async def preview_voice(req: VoicePreviewRequest):
-    """Generate a quick 1-sentence audio preview for a selected voice."""
-    sample_text = req.text or (
-        "Welcome to PodcastAI! This is a preview of my voice powered by Sarvam Bulbul."
-        if req.language_code == "en-IN"
-        else "नमस्ते! पॉडकास्ट एआई में आपका स्वागत है। यह बुलबुल की आवाज़ का प्रीव्यू है।"
-    )
+    """Generate a quick 1-sentence audio preview for a selected voice in the target language."""
+    sample_text = req.text or LANGUAGE_PREVIEW_TEXTS.get(req.language_code, LANGUAGE_PREVIEW_TEXTS["en-IN"])
     try:
         audio_bytes = await synthesize_chunk(
             text=sample_text,

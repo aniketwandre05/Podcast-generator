@@ -6,7 +6,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.episode import Episode
-from app.models.schemas import EpisodeCreateRequest, EpisodeResponse, ScriptUpdateRequest, TranslateEpisodeRequest
+from app.models.schemas import (
+    EpisodeCreateRequest,
+    EpisodeResponse,
+    ScriptUpdateRequest,
+    TranslateEpisodeRequest,
+    TurnTranslateRequest,
+)
 from app.pipeline.generator import regenerate_episode_audio, run_full_podcast_pipeline
 from app.sarvam.translate import translate_text
 
@@ -20,6 +26,7 @@ def serialize_episode(ep: Episode) -> Dict[str, Any]:
         "topic": ep.topic,
         "source_type": ep.source_type,
         "language": ep.language,
+        "dialogue_style": getattr(ep, "dialogue_style", "code_mixed") or "code_mixed",
         "tone": ep.tone,
         "target_duration_mins": ep.target_duration_mins,
         "speakers_config": ep.speakers_config,
@@ -69,6 +76,7 @@ def create_episode(
         source_type=req.source_type,
         source_content=req.source_content or "",
         language=req.language,
+        dialogue_style=req.dialogue_style,
         tone=req.tone,
         target_duration_mins=req.target_duration_mins,
         audience_level=req.audience_level,
@@ -155,11 +163,37 @@ async def translate_episode(
     ep.description = translated_desc
     ep.script = script_data
     ep.language = target_lang
+
+    if req.update_speakers and ep.speakers_config:
+        updated_speakers = []
+        for s in ep.speakers_config:
+            s_copy = dict(s)
+            s_copy["language_code"] = target_lang
+            updated_speakers.append(s_copy)
+        ep.speakers_config = updated_speakers
+
     db.commit()
 
     # Re-synthesize with translated script
     background_tasks.add_task(regenerate_episode_audio, episode_id)
     return {"status": "success", "message": f"Script translated to {target_lang}. Audio re-synthesis triggered."}
+
+@router.post("/translate-turn")
+async def translate_single_turn(req: TurnTranslateRequest):
+    """Translate an individual dialogue turn or text snippet on the fly."""
+    translated = await translate_text(
+        text=req.text,
+        source_language_code=req.source_language_code,
+        target_language_code=req.target_language_code,
+        mode=req.mode,
+    )
+    return {
+        "original_text": req.text,
+        "translated_text": translated,
+        "source_language_code": req.source_language_code,
+        "target_language_code": req.target_language_code,
+        "mode": req.mode,
+    }
 
 @router.delete("/{episode_id}")
 def delete_episode(episode_id: str, db: Session = Depends(get_db)):

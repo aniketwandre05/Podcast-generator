@@ -45,6 +45,7 @@ class EpisodeCreateRequest(BaseModel):
     source_type: str = "prompt" # prompt, document, url
     source_content: Optional[str] = ""
     language: str = "en-IN"
+    dialogue_style: str = "code_mixed" # code_mixed, native, english_indian, bilingual
     tone: str = "casual" # casual, educational, debate, interview, storytelling, news-brief
     target_duration_mins: int = 5 # 5, 10, 15, 20
     audience_level: str = "general" # beginner, general, technical, executive
@@ -60,6 +61,7 @@ class EpisodeResponse(BaseModel):
     topic: str
     source_type: str
     language: str
+    dialogue_style: Optional[str] = "code_mixed"
     tone: str
     target_duration_mins: int
     speakers_config: List[Dict[str, Any]]
@@ -86,7 +88,14 @@ class VoicePreviewRequest(BaseModel):
 class ScriptUpdateRequest(BaseModel):
     script: Script
 
+class TurnTranslateRequest(BaseModel):
+    text: str
+    source_language_code: str = "en-IN"
+    target_language_code: str = "hi-IN"
+    mode: str = "modern-colloquial" # formal, modern-colloquial, classic-colloquial, code-mixed
+
 class TranslateEpisodeRequest(BaseModel):
     target_language_code: str # e.g. hi-IN, bn-IN, ta-IN
     mode: str = "modern-colloquial" # formal, modern-colloquial, classic-colloquial, code-mixed
+    update_speakers: bool = True
 

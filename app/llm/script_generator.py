@@ -25,6 +25,7 @@ async def generate_episode_outline(
     audience_level: str = "general",
     speakers: List[Dict[str, Any]] = None,
     language: str = "en-IN",
+    dialogue_style: str = "code_mixed",
     on_progress: Optional[Callable[[str, int], None]] = None,
 ) -> Outline:
     """Step A: Generate comprehensive episode outline."""
@@ -38,14 +39,16 @@ async def generate_episode_outline(
         audience_level=audience_level,
         num_speakers=len(speakers),
         language=language,
+        dialogue_style=dialogue_style,
     )
 
+    speaker_descs = [f"{s.get('display_name')} ({s.get('language_code', language)})" for s in speakers]
     user_prompt = (
         f"Topic: {topic}\n\n"
         f"Research Brief Key Facts: {research_brief.get('key_facts', [])}\n"
         f"Key Points: {research_brief.get('key_points', [])}\n"
         f"Interesting Angles: {research_brief.get('interesting_angles', [])}\n"
-        f"Speakers: {[s.get('display_name') for s in speakers]}"
+        f"Speakers: {speaker_descs}"
     )
 
     data = await generate_structured_json([
@@ -61,6 +64,7 @@ async def generate_full_script(
     speakers: List[Dict[str, Any]],
     tone: str = "casual",
     language: str = "en-IN",
+    dialogue_style: str = "code_mixed",
     on_progress: Optional[Callable[[str, int], None]] = None,
 ) -> Script:
     """Step B: Generate script segment by segment for narrative continuity."""
@@ -88,6 +92,7 @@ async def generate_full_script(
     built_segments: List[Segment] = []
     prev_summary = ""
     total_segs = len(segments_to_build)
+    speaker_lang_map = {s.get("speaker_id"): s.get("language_code", language) for s in speakers}
 
     for idx, seg_info in enumerate(segments_to_build):
         progress_pct = 35 + int(((idx + 1) / total_segs) * 30) # 35% -> 65%
@@ -100,6 +105,7 @@ async def generate_full_script(
             speakers=speakers,
             tone=tone,
             language=language,
+            dialogue_style=dialogue_style,
             previous_summary=prev_summary,
         )
 
@@ -115,12 +121,14 @@ async def generate_full_script(
             raw_text = t.get("text", "")
             cleaned_text = sanitize_turn_text(raw_text)
             if cleaned_text:
+                sp_id = t.get("speaker", speakers[0].get("speaker_id", "HOST"))
+                turn_lang = t.get("language_code") or speaker_lang_map.get(sp_id, language)
                 turns.append(Turn(
-                    speaker=t.get("speaker", speakers[0].get("speaker_id", "HOST")),
+                    speaker=sp_id,
                     text=cleaned_text,
                     emotion=t.get("emotion", "natural"),
                     pause_after_ms=t.get("pause_after_ms", 350),
-                    language_code=t.get("language_code", language),
+                    language_code=turn_lang,
                 ))
 
         segment = Segment(

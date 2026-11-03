@@ -31,6 +31,13 @@ const LANGUAGES = [
   { code: 'od-IN', name: 'Odia (ଓଡ଼ିଆ)' },
 ];
 
+const DIALOGUE_STYLES = [
+  { id: 'code_mixed', label: 'Conversational Code-Mixed', desc: 'Natural blend of Indic language & English (Hinglish/Tanglish)' },
+  { id: 'native', label: 'Pure Native Script', desc: 'Authentic regional phrasing in native Indic script' },
+  { id: 'english_indian', label: 'Indian English', desc: 'Contemporary Indian English with regional nuance' },
+  { id: 'bilingual', label: 'Bilingual / Cross-Lingual', desc: 'Speakers converse across different languages' },
+];
+
 const PRESET_VOICES = [
   { id: 'shubh', name: 'Shubh (Male, Authoritative)' },
   { id: 'priya', name: 'Priya (Female, Energetic)' },
@@ -47,6 +54,7 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
   const [topic, setTopic] = useState('');
   const [sourceContent, setSourceContent] = useState('');
   const [language, setLanguage] = useState('en-IN');
+  const [dialogueStyle, setDialogueStyle] = useState('code_mixed');
   const [tone, setTone] = useState('casual');
   const [durationMins, setDurationMins] = useState(5);
   const [bgMusic, setBgMusic] = useState('chill_ambient.wav');
@@ -68,13 +76,21 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
     setSpeakers(updated);
   };
 
-  const handlePreviewVoice = async (voiceId: string) => {
+  const handleLanguageChange = (newLang: string) => {
+    setLanguage(newLang);
+    setSpeakers(speakers.map(s => ({
+      ...s,
+      language_code: newLang,
+    })));
+  };
+
+  const handlePreviewVoice = async (voiceId: string, langCode?: string) => {
     try {
       setPreviewPlaying(voiceId);
       const res = await fetch('/api/voices/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ voice: voiceId, language_code: language }),
+        body: JSON.stringify({ voice: voiceId, language_code: langCode || language }),
       });
       const data = await res.json();
       if (data.audio_base64) {
@@ -98,7 +114,7 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
     try {
       const activeSpeakers = speakers.slice(0, numSpeakers).map(s => ({
         ...s,
-        language_code: language,
+        language_code: s.language_code || language,
       }));
 
       const res = await fetch('/api/episodes', {
@@ -109,6 +125,7 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
           source_type: sourceType,
           source_content: sourceContent,
           language,
+          dialogue_style: dialogueStyle,
           tone,
           target_duration_mins: durationMins,
           speakers: activeSpeakers,
@@ -233,11 +250,11 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                Language / Style
+                Primary Episode Language
               </label>
               <select
                 value={language}
-                onChange={(e) => setLanguage(e.target.value)}
+                onChange={(e) => handleLanguageChange(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm"
               >
                 {LANGUAGES.map((l) => (
@@ -300,12 +317,36 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
             </div>
           </div>
 
+          {/* Multilingual Dialogue Style */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+              Multilingual Dialogue Style
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {DIALOGUE_STYLES.map((style) => (
+                <button
+                  key={style.id}
+                  type="button"
+                  onClick={() => setDialogueStyle(style.id)}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    dialogueStyle === style.id
+                      ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/50'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="text-xs font-semibold text-slate-200">{style.label}</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">{style.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Speakers Configuration */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center space-x-1">
                 <Users className="h-3.5 w-3.5 text-indigo-400" />
-                <span>Cast & Voices (Bulbul:v3)</span>
+                <span>Cast & Voices (Bulbul:v3 Multilingual)</span>
               </label>
               <div className="flex items-center space-x-1 text-xs">
                 {[1, 2, 3].map((num) => (
@@ -325,21 +366,21 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
 
             <div className="space-y-3">
               {speakers.slice(0, numSpeakers).map((sp, idx) => (
-                <div key={sp.speaker_id} className="p-3 bg-slate-950 border border-slate-800 rounded-xl flex items-center space-x-3">
-                  <div className="w-16">
-                    <span className="text-xs font-bold text-indigo-400 uppercase">{sp.speaker_id}</span>
+                <div key={sp.speaker_id} className="p-3 bg-slate-950 border border-slate-800 rounded-xl flex flex-wrap sm:flex-nowrap items-center gap-2">
+                  <div className="w-14">
+                    <span className="text-[11px] font-bold text-indigo-400 uppercase">{sp.speaker_id}</span>
                   </div>
                   <input
                     type="text"
                     value={sp.display_name}
                     onChange={(e) => handleSpeakerChange(idx, 'display_name', e.target.value)}
                     placeholder="Name"
-                    className="w-28 px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
+                    className="w-24 px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
                   />
                   <select
                     value={sp.voice}
                     onChange={(e) => handleSpeakerChange(idx, 'voice', e.target.value)}
-                    className="flex-1 px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
+                    className="flex-1 min-w-[120px] px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
                   >
                     {PRESET_VOICES.map((v) => (
                       <option key={v.id} value={v.id}>
@@ -347,12 +388,24 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
                       </option>
                     ))}
                   </select>
+                  <select
+                    value={sp.language_code || language}
+                    onChange={(e) => handleSpeakerChange(idx, 'language_code', e.target.value)}
+                    className="w-28 px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200"
+                    title="Speaker Language"
+                  >
+                    {LANGUAGES.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.name.split(' ')[0]} ({l.code.split('-')[0]})
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
-                    onClick={() => handlePreviewVoice(sp.voice)}
+                    onClick={() => handlePreviewVoice(sp.voice, sp.language_code || language)}
                     disabled={previewPlaying === sp.voice}
                     className="p-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 transition-colors"
-                    title="Preview Voice"
+                    title="Preview Voice in Speaker Language"
                   >
                     {previewPlaying === sp.voice ? (
                       <Loader2 className="h-4 w-4 animate-spin" />

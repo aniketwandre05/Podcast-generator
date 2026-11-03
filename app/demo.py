@@ -22,8 +22,88 @@ async def generate_demo_episode(language: str = "en-IN", output_name: str = "sam
     init_db()
 
     is_hindi = language.startswith("hi")
-    
-    if is_hindi:
+    is_hinglish = language in ["hinglish", "code_mixed"]
+    is_bilingual = language in ["bilingual"]
+
+    if is_hinglish:
+        topic = "The Rise of Conversational Voice AI in India"
+        speakers = [
+            {"speaker_id": "HOST", "display_name": "Rohan", "voice": "rohan", "pace": 1.0, "language_code": "hi-IN"},
+            {"speaker_id": "GUEST", "display_name": "Priya", "voice": "priya", "pace": 1.0, "language_code": "hi-IN"},
+        ]
+        sample_dialogue = [
+            Turn(
+                speaker="HOST",
+                text="Welcome back to PodcastAI! Aaj hum baat kar rahe hain ek super exciting topic par: Indian Voice AI ka ground reality.",
+                pause_after_ms=350,
+                language_code="hi-IN",
+            ),
+            Turn(
+                speaker="GUEST",
+                text="Exactly Rohan! Pehle lagta tha ki speech synthesis sirf robotic announcements ke liye hai, but Sarvam ke Bulbul models ne poora game change kar diya hai.",
+                pause_after_ms=300,
+                language_code="hi-IN",
+            ),
+            Turn(
+                speaker="HOST",
+                text="Right! Aur sabse fascinating baat yeh hai ki ye natural code-mixing aur Indian accents ko itne smoothly pronounce karta hai.",
+                pause_after_ms=400,
+                language_code="hi-IN",
+            ),
+            Turn(
+                speaker="GUEST",
+                text="Definitely. Ab content creators multi-speaker podcasts kisi bhi Indian language mein minutes mein scale kar sakte hain.",
+                pause_after_ms=350,
+                language_code="hi-IN",
+            ),
+            Turn(
+                speaker="HOST",
+                text="That is incredible! Agle episode mein milte hain ek aur deep dive ke sath, only on PodcastAI.",
+                pause_after_ms=500,
+                language_code="hi-IN",
+            ),
+        ]
+        title = "Voice AI & Hinglish Conversations: The Podcast Revolution"
+    elif is_bilingual:
+        topic = "Bilingual Tech Spotlight: AI Across India"
+        speakers = [
+            {"speaker_id": "HOST", "display_name": "Shubh", "voice": "shubh", "pace": 1.0, "language_code": "en-IN"},
+            {"speaker_id": "GUEST", "display_name": "Dev", "voice": "dev", "pace": 1.0, "language_code": "hi-IN"},
+        ]
+        sample_dialogue = [
+            Turn(
+                speaker="HOST",
+                text="Welcome to PodcastAI! Today we are exploring how cross-lingual dialogue is transforming digital communication in India.",
+                pause_after_ms=350,
+                language_code="en-IN",
+            ),
+            Turn(
+                speaker="GUEST",
+                text="नमस्ते शुभ! बहुत खुशी हुई यहाँ आकर। भारत में भाषा की विविधता इतनी समृद्ध है कि बहुभाषी तकनीक की वाकई बहुत ज़रूरत है।",
+                pause_after_ms=300,
+                language_code="hi-IN",
+            ),
+            Turn(
+                speaker="HOST",
+                text="Absolutely Dev. When a host speaks in English and guests respond in Hindi or regional languages, audiences connect on a whole new level.",
+                pause_after_ms=400,
+                language_code="en-IN",
+            ),
+            Turn(
+                speaker="GUEST",
+                text="बिल्कुल! सर्वम एआई और बुलबुल जैसी तकनीकों से अब यह बिल्कुल आसान और स्वाभाविक हो गया है।",
+                pause_after_ms=350,
+                language_code="hi-IN",
+            ),
+            Turn(
+                speaker="HOST",
+                text="Thank you for joining us today, Dev! Listeners, make sure to tune in next week for more breakthroughs.",
+                pause_after_ms=500,
+                language_code="en-IN",
+            ),
+        ]
+        title = "Bilingual Voice AI: Connecting India Across Languages"
+    elif is_hindi:
         topic = "कृत्रिम बुद्धिमत्ता (AI) और भारतीय भाषाओं का भविष्य"
         speakers = [
             {"speaker_id": "HOST", "display_name": "Rohan", "voice": "rohan", "pace": 1.0, "language_code": "hi-IN"},
@@ -141,7 +221,7 @@ async def generate_demo_episode(language: str = "en-IN", output_name: str = "sam
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PodcastAI Demo Generator")
     parser.add_argument("--demo", action="store_true", help="Run 1-minute 2-speaker sample generation")
-    parser.add_argument("--lang", choices=["en", "hi", "all"], default="all", help="Target language (en, hi, or all)")
+    parser.add_argument("--lang", choices=["en", "hi", "hinglish", "bilingual", "all"], default="all", help="Target language (en, hi, hinglish, bilingual, or all)")
     args = parser.parse_args()
 
     async def main():
@@ -149,6 +229,10 @@ if __name__ == "__main__":
             await generate_demo_episode("en-IN", "sample_english.wav")
         if args.lang in ["hi", "all"]:
             await generate_demo_episode("hi-IN", "sample_hindi.wav")
+        if args.lang in ["hinglish"]:
+            await generate_demo_episode("hinglish", "sample_hinglish.wav")
+        if args.lang in ["bilingual"]:
+            await generate_demo_episode("bilingual", "sample_bilingual.wav")
 
     asyncio.run(main())
 
