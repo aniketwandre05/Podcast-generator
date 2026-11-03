@@ -236,21 +236,19 @@ async def run_full_podcast_pipeline(episode_id: str):
                 all_turns.append(turn)
 
         total_turns = len(all_turns)
-        turn_audio_list = []
+        completed_count = 0
+        progress_lock = asyncio.Lock()
 
-        for idx, turn in enumerate(all_turns):
-            pct = 68 + int(((idx + 1) / max(1, total_turns)) * 20) # 68% -> 88%
-            update_episode_status(episode_id, "synthesizing", pct, f"Synthesizing turn {idx + 1}/{total_turns} ({turn.speaker})...")
-            await publish_episode_event(episode_id, "progress", {"status": "synthesizing", "percent": pct, "message": f"Synthesizing turn {idx + 1}/{total_turns}..."})
-
-            sp_config = speaker_map.get(turn.speaker, speakers[0])
+        async def synthesize_turn_worker(i: int, t: Any):
+            nonlocal completed_count
+            sp_config = speaker_map.get(t.speaker, speakers[0])
             voice = sp_config.get("voice", "shubh")
             pace = float(sp_config.get("pace", 1.0))
-            turn_lang = turn.language_code or sp_config.get("language_code", language)
+            turn_lang = t.language_code or sp_config.get("language_code", language)
 
             # Synthesize turn (handling internal chunking if sentence exceeds limits)
             audio_chunks = await synthesize_turn_text(
-                text=turn.text,
+                text=t.text,
                 voice=voice,
                 language_code=turn_lang,
                 pace=pace,
@@ -261,14 +259,36 @@ async def run_full_podcast_pipeline(episode_id: str):
                 turn_wav = audio_chunks[0]
             else:
                 from app.audio.processor import read_wav_bytes, write_wav_bytes
-                combined = []
-                for c in audio_chunks:
-                    arr, sr = read_wav_bytes(c)
-                    combined.append(arr)
                 import numpy as np
+                combined = [read_wav_bytes(c)[0] for c in audio_chunks]
                 turn_wav = write_wav_bytes(np.concatenate(combined))
 
-            turn_audio_list.append((turn.model_dump(), turn_wav))
+            async with progress_lock:
+                completed_count += 1
+                pct = 68 + int((completed_count / max(1, total_turns)) * 20)  # 68% -> 88%
+                update_episode_status(
+                    episode_id,
+                    "synthesizing",
+                    pct,
+                    f"Synthesizing turn {completed_count}/{total_turns} ({t.speaker})...",
+                )
+                await publish_episode_event(
+                    episode_id,
+                    "progress",
+                    {
+                        "status": "synthesizing",
+                        "percent": pct,
+                        "message": f"Synthesized turn {completed_count}/{total_turns} ({t.speaker})...",
+                    },
+                )
+
+            return (i, t.model_dump(), turn_wav)
+
+        # Synthesize turns in parallel (bounded by tts_semaphore in tts.py)
+        turn_results = await asyncio.gather(*(synthesize_turn_worker(i, t) for i, t in enumerate(all_turns)))
+        # Sort results strictly back into the narrative sequence
+        turn_results.sort(key=lambda r: r[0])
+        turn_audio_list = [(r[1], r[2]) for r in turn_results]
 
         # Step 5: Mixing & Production (88% -> 98%)
         update_episode_status(episode_id, "mixing", 90, "Stitching audio, balancing loudness, and ducking music...")
@@ -364,23 +384,21 @@ async def regenerate_episode_audio(episode_id: str):
                 all_turns.append(turn)
 
         total_turns = len(all_turns)
-        turn_audio_list = []
+        completed_count = 0
+        progress_lock = asyncio.Lock()
 
-        update_episode_status(episode_id, "synthesizing", 10, "Regenerating audio for turns...")
+        update_episode_status(episode_id, "synthesizing", 10, "Regenerating audio for turns in parallel...")
         await publish_episode_event(episode_id, "progress", {"status": "synthesizing", "percent": 10, "message": "Synthesizing modified turns..."})
 
-        for idx, turn in enumerate(all_turns):
-            pct = 10 + int(((idx + 1) / max(1, total_turns)) * 75)
-            update_episode_status(episode_id, "synthesizing", pct, f"Turn {idx + 1}/{total_turns}...")
-            await publish_episode_event(episode_id, "progress", {"status": "synthesizing", "percent": pct, "message": f"Turn {idx + 1}/{total_turns}..."})
-
-            sp_config = speaker_map.get(turn.speaker, speakers[0])
+        async def regen_turn_worker(i: int, t: Any):
+            nonlocal completed_count
+            sp_config = speaker_map.get(t.speaker, speakers[0])
             voice = sp_config.get("voice", "shubh")
             pace = float(sp_config.get("pace", 1.0))
-            turn_lang = turn.language_code or sp_config.get("language_code", language)
+            turn_lang = t.language_code or sp_config.get("language_code", language)
 
             audio_chunks = await synthesize_turn_text(
-                text=turn.text,
+                text=t.text,
                 voice=voice,
                 language_code=turn_lang,
                 pace=pace,
@@ -394,7 +412,17 @@ async def regenerate_episode_audio(episode_id: str):
                 combined = [read_wav_bytes(c)[0] for c in audio_chunks]
                 turn_wav = write_wav_bytes(np.concatenate(combined))
 
-            turn_audio_list.append((turn.model_dump(), turn_wav))
+            async with progress_lock:
+                completed_count += 1
+                pct = 10 + int((completed_count / max(1, total_turns)) * 75)
+                update_episode_status(episode_id, "synthesizing", pct, f"Turn {completed_count}/{total_turns}...")
+                await publish_episode_event(episode_id, "progress", {"status": "synthesizing", "percent": pct, "message": f"Turn {completed_count}/{total_turns}..."})
+
+            return (i, t.model_dump(), turn_wav)
+
+        turn_results = await asyncio.gather(*(regen_turn_worker(i, t) for i, t in enumerate(all_turns)))
+        turn_results.sort(key=lambda r: r[0])
+        turn_audio_list = [(r[1], r[2]) for r in turn_results]
 
         update_episode_status(episode_id, "mixing", 90, "Re-mixing episode...")
         master_wav_bytes, turn_timestamps, duration_s = mix_podcast_episode(

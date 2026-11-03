@@ -20,6 +20,35 @@ export const ProgressViewer: React.FC<ProgressViewerProps> = ({ episodeId, onCom
   const [logs, setLogs] = useState<LogEntry[]>([]);
 
   useEffect(() => {
+    let isMounted = true;
+
+    // 1. Initial status fetch to sync state immediately (even after page refresh)
+    const fetchCurrentStatus = async () => {
+      try {
+        const res = await fetch(`/api/episodes/${episodeId}`);
+        if (!res.ok || !isMounted) return;
+        const data = await res.json();
+        if (data.progress_percent !== undefined) setPercent(data.progress_percent);
+        if (data.status) setStatus(data.status);
+        if (data.status_message) setMessage(data.status_message);
+
+        if (data.status === 'completed') {
+          setPercent(100);
+          setStatus('completed');
+          setMessage('Episode generation complete!');
+          setTimeout(() => {
+            if (isMounted) onComplete();
+          }, 800);
+        } else if (data.status === 'failed') {
+          setError(data.error_message || 'Episode generation failed.');
+        }
+      } catch (err) {
+        console.error('Initial status fetch error', err);
+      }
+    };
+    fetchCurrentStatus();
+
+    // 2. Real-time Server-Sent Events (SSE) stream
     const eventSource = new EventSource(`/api/episodes/${episodeId}/events`);
 
     eventSource.addEventListener('progress', (e: any) => {
@@ -49,20 +78,67 @@ export const ProgressViewer: React.FC<ProgressViewerProps> = ({ episodeId, onCom
       setMessage('Episode generation complete!');
       eventSource.close();
       setTimeout(() => {
-        onComplete();
+        if (isMounted) onComplete();
       }, 1000);
     });
 
     eventSource.addEventListener('error', (e: any) => {
       try {
         const payload = JSON.parse(e.data);
-        setError(payload.error || 'Pipeline encountered an unexpected error.');
+        if (payload.error) setError(payload.error);
       } catch {
-        // SSE connection drop / reconnect or server error
+        // SSE reconnecting or silent timeout
       }
     });
 
+    // 3. Fallback polling every 3 seconds to guarantee progress never hangs if SSE disconnects on Render
+    const pollInterval = setInterval(async () => {
+      if (!isMounted) return;
+      try {
+        const res = await fetch(`/api/episodes/${episodeId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (data.progress_percent !== undefined && data.progress_percent > percent) {
+          setPercent(data.progress_percent);
+        }
+        if (data.status && data.status !== status) {
+          setStatus(data.status);
+        }
+        if (data.status_message && data.status_message !== message) {
+          setMessage(data.status_message);
+          setLogs((prev) => [
+            {
+              timestamp: new Date().toLocaleTimeString(),
+              message: data.status_message,
+              status: data.status,
+            },
+            ...prev.slice(0, 30),
+          ]);
+        }
+
+        if (data.status === 'completed') {
+          setPercent(100);
+          setStatus('completed');
+          setMessage('Episode generation complete!');
+          clearInterval(pollInterval);
+          eventSource.close();
+          setTimeout(() => {
+            if (isMounted) onComplete();
+          }, 800);
+        } else if (data.status === 'failed') {
+          setError(data.error_message || 'Pipeline failed.');
+          clearInterval(pollInterval);
+          eventSource.close();
+        }
+      } catch (err) {
+        console.error('Polling sync error', err);
+      }
+    }, 3000);
+
     return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
       eventSource.close();
     };
   }, [episodeId, onComplete]);
