@@ -1,9 +1,13 @@
 import asyncio
 import json
+import logging
+from pathlib import Path
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.episode import Episode
 from app.models.schemas import (
@@ -14,7 +18,10 @@ from app.models.schemas import (
     TurnTranslateRequest,
 )
 from app.pipeline.generator import regenerate_episode_audio, run_full_podcast_pipeline
+from app.research.provider import DocumentResearchProvider
 from app.sarvam.translate import translate_text
+
+logger = logging.getLogger("podcastai.api.episodes")
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
 
@@ -240,4 +247,52 @@ def duplicate_episode(
     db.add(clone)
     db.commit()
     return serialize_episode(clone)
+
+@router.post("/upload-doc")
+async def upload_document(file: UploadFile = File(...)):
+    """Upload and extract text from document (PDF, DOCX, TXT, MD)."""
+    filename = file.filename or "uploaded_document"
+    ext = Path(filename).suffix.lower()
+    
+    if ext not in [".pdf", ".docx", ".txt", ".md"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format '{ext}'. Supported formats: .pdf, .docx, .txt, .md",
+        )
+    
+    contents = await file.read()
+    if len(contents) > 25 * 1024 * 1024: # 25 MB limit
+        raise HTTPException(status_code=400, detail="File too large. Maximum supported file size is 25MB.")
+    
+    temp_dir = settings.DATA_DIR / "uploads"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    clean_stem = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", Path(filename).stem)[:50]
+    saved_filename = f"{uuid.uuid4().hex[:8]}_{clean_stem}{ext}"
+    temp_file = temp_dir / saved_filename
+    temp_file.write_bytes(contents)
+    
+    try:
+        prov = DocumentResearchProvider()
+        extracted_text = await prov.extract_text(str(temp_file))
+        cleaned_text = re.sub(r"\s+", " ", extracted_text).strip()
+        words = len(cleaned_text.split()) if cleaned_text else 0
+        
+        # Suggested title from filename
+        suggested_title = Path(filename).stem.replace("_", " ").replace("-", " ").strip()
+        suggested_title = re.sub(r"\s+", " ", suggested_title).title()
+        
+        return {
+            "status": "success",
+            "filename": filename,
+            "file_size": len(contents),
+            "file_type": ext.lstrip("."),
+            "extracted_text": cleaned_text,
+            "word_count": words,
+            "char_count": len(cleaned_text),
+            "saved_path": str(temp_file),
+            "suggested_title": suggested_title,
+        }
+    except Exception as e:
+        logger.error(f"Failed to process document {filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to extract document content: {str(e)}")
 

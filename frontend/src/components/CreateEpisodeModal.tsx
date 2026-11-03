@@ -1,5 +1,21 @@
 import React, { useState } from 'react';
-import { X, Sparkles, FileText, Globe, Play, Loader2, Music, Users, Clock } from 'lucide-react';
+import {
+  X,
+  Sparkles,
+  FileText,
+  Globe,
+  Play,
+  Loader2,
+  Music,
+  Users,
+  Clock,
+  UploadCloud,
+  FileCheck,
+  Trash2,
+  AlertCircle,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
 import type { SpeakerConfig } from '../types';
 
 interface CreateEpisodeModalProps {
@@ -62,6 +78,21 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [previewPlaying, setPreviewPlaying] = useState<string | null>(null);
 
+  // Document upload & drag-and-drop state
+  const [docInputMode, setDocInputMode] = useState<'upload' | 'paste'>('upload');
+  const [uploadedDoc, setUploadedDoc] = useState<{
+    name: string;
+    size: number;
+    type: string;
+    words: number;
+    path: string;
+    extractedText: string;
+  } | null>(null);
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [docUploadError, setDocUploadError] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [showExtractedPreview, setShowExtractedPreview] = useState(false);
+
   const [speakers, setSpeakers] = useState<SpeakerConfig[]>([
     { speaker_id: 'HOST', display_name: 'Shubh', voice: 'shubh', pace: 1.0, language_code: 'en-IN' },
     { speaker_id: 'GUEST', display_name: 'Priya', voice: 'priya', pace: 1.0, language_code: 'en-IN' },
@@ -69,6 +100,99 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
   ]);
 
   if (!isOpen) return null;
+
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
+  const handleFileUpload = async (file: File) => {
+    setDocUploadError(null);
+    const validExtensions = ['.pdf', '.docx', '.txt', '.md'];
+    const fileName = file.name.toLowerCase();
+    const hasValidExt = validExtensions.some((ext) => fileName.endsWith(ext));
+
+    if (!hasValidExt) {
+      setDocUploadError('Unsupported format. Please upload a PDF, Word (.docx), Markdown (.md), or Text (.txt) file.');
+      return;
+    }
+
+    if (file.size > 25 * 1024 * 1024) {
+      setDocUploadError('File exceeds 25MB limit.');
+      return;
+    }
+
+    setIsUploadingDoc(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/episodes/upload-doc', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Failed to upload document');
+      }
+
+      const data = await res.json();
+      setUploadedDoc({
+        name: data.filename,
+        size: data.file_size,
+        type: data.file_type,
+        words: data.word_count,
+        path: data.saved_path,
+        extractedText: data.extracted_text,
+      });
+
+      // Pass the extracted content to the generator
+      setSourceContent(data.extracted_text);
+
+      // Auto-suggest episode topic if user has not typed one
+      if (!topic.trim() && data.suggested_title) {
+        setTopic(data.suggested_title);
+      }
+    } catch (err: any) {
+      console.error('Document upload error:', err);
+      setDocUploadError(err.message || 'Error processing document.');
+    } finally {
+      setIsUploadingDoc(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      handleFileUpload(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleRemoveDoc = () => {
+    setUploadedDoc(null);
+    setSourceContent('');
+    setDocUploadError(null);
+  };
 
   const handleSpeakerChange = (index: number, field: keyof SpeakerConfig, value: any) => {
     const updated = [...speakers];
@@ -220,28 +344,211 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
             />
           </div>
 
-          {/* Extra source content (URL or Document paste) */}
-          {sourceType !== 'prompt' && (
+          {/* Extra source content (URL or Document upload/paste) */}
+          {sourceType === 'url' && (
             <div>
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-                {sourceType === 'url' ? 'Target Webpage URL' : 'Document Content / Reference Notes'}
+                Target Webpage URL
               </label>
-              {sourceType === 'url' ? (
-                <input
-                  type="url"
-                  value={sourceContent}
-                  onChange={(e) => setSourceContent(e.target.value)}
-                  placeholder="https://example.com/article"
-                  className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm"
-                />
+              <input
+                type="url"
+                value={sourceContent}
+                onChange={(e) => setSourceContent(e.target.value)}
+                placeholder="https://example.com/article"
+                className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          )}
+
+          {sourceType === 'document' && (
+            <div className="space-y-3">
+              {/* Document Mode Toggle: Upload vs Paste */}
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                  Document Source
+                </label>
+                <div className="flex items-center space-x-1 p-0.5 bg-slate-950 rounded-lg border border-slate-800 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setDocInputMode('upload')}
+                    className={`px-2.5 py-1 rounded-md transition-colors ${
+                      docInputMode === 'upload'
+                        ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Upload Document
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDocInputMode('paste')}
+                    className={`px-2.5 py-1 rounded-md transition-colors ${
+                      docInputMode === 'paste'
+                        ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Paste Text / Notes
+                  </button>
+                </div>
+              </div>
+
+              {docInputMode === 'upload' ? (
+                <div>
+                  {!uploadedDoc ? (
+                    /* Drag & Drop Upload Zone */
+                    <div
+                      onDrop={handleDrop}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onClick={() => document.getElementById('file-upload-input')?.click()}
+                      className={`relative border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                        isDragOver
+                          ? 'border-indigo-500 bg-indigo-500/10 ring-4 ring-indigo-500/20'
+                          : 'border-slate-800 hover:border-indigo-500/60 bg-slate-950/60 hover:bg-slate-950'
+                      }`}
+                    >
+                      <input
+                        id="file-upload-input"
+                        type="file"
+                        accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            handleFileUpload(e.target.files[0]);
+                          }
+                        }}
+                      />
+
+                      {isUploadingDoc ? (
+                        <div className="py-4 flex flex-col items-center justify-center space-y-2">
+                          <Loader2 className="h-8 w-8 text-indigo-400 animate-spin" />
+                          <p className="text-sm font-medium text-slate-200">Parsing and extracting text...</p>
+                          <p className="text-xs text-slate-400">Processing document structure and content</p>
+                        </div>
+                      ) : (
+                        <div className="py-2 flex flex-col items-center justify-center space-y-2">
+                          <div className="p-3 bg-indigo-500/10 rounded-2xl text-indigo-400 border border-indigo-500/20">
+                            <UploadCloud className="h-7 w-7" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-slate-200">
+                              <span className="text-indigo-400">Click to upload</span> or drag and drop document
+                            </p>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              Supports PDF, Word (.docx), Markdown (.md), or Plain Text (.txt) up to 25MB
+                            </p>
+                          </div>
+                          <div className="flex items-center space-x-1.5 pt-1">
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20 font-bold">
+                              PDF
+                            </span>
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-bold">
+                              DOCX
+                            </span>
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-bold">
+                              TXT
+                            </span>
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-bold">
+                              MD
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Uploaded Document Info Card */
+                    <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div
+                            className={`p-2.5 rounded-xl border ${
+                              uploadedDoc.type === 'pdf'
+                                ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                                : uploadedDoc.type === 'docx'
+                                ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                            }`}
+                          >
+                            <FileCheck className="h-6 w-6" />
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold text-white flex items-center space-x-2">
+                              <span className="truncate max-w-[240px] sm:max-w-xs">{uploadedDoc.name}</span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded uppercase font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                                {uploadedDoc.type}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-400 flex items-center space-x-2 mt-0.5">
+                              <span>{formatBytes(uploadedDoc.size)}</span>
+                              <span>•</span>
+                              <span className="text-emerald-400 font-medium">
+                                {uploadedDoc.words.toLocaleString()} words extracted
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-1">
+                          <button
+                            type="button"
+                            onClick={() => setShowExtractedPreview(!showExtractedPreview)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                            title={showExtractedPreview ? 'Hide Preview' : 'View Extracted Text'}
+                          >
+                            {showExtractedPreview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRemoveDoc}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                            title="Remove Document"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Extracted Content Accordion/Editor */}
+                      {showExtractedPreview && (
+                        <div className="pt-2 border-t border-slate-800/80">
+                          <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1.5">
+                            <span>Extracted Text Content</span>
+                            <span>{sourceContent.split(/\s+/).filter(Boolean).length} words</span>
+                          </div>
+                          <textarea
+                            rows={4}
+                            value={sourceContent}
+                            onChange={(e) => setSourceContent(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {docUploadError && (
+                    <div className="mt-2 p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center space-x-2 text-xs text-rose-300">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                      <span>{docUploadError}</span>
+                    </div>
+                  )}
+                </div>
               ) : (
-                <textarea
-                  rows={3}
-                  value={sourceContent}
-                  onChange={(e) => setSourceContent(e.target.value)}
-                  placeholder="Paste article, study notes, or transcript excerpts here..."
-                  className="w-full px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm"
-                />
+                /* Direct Text / Notes Paste */
+                <div>
+                  <textarea
+                    rows={4}
+                    value={sourceContent}
+                    onChange={(e) => setSourceContent(e.target.value)}
+                    placeholder="Paste article, study notes, or transcript excerpts here..."
+                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-slate-500"
+                  />
+                  <div className="flex justify-between text-[11px] text-slate-500 mt-1">
+                    <span>Grounded factual extraction mode</span>
+                    <span>{sourceContent.split(/\s+/).filter(Boolean).length} words</span>
+                  </div>
+                </div>
               )}
             </div>
           )}
