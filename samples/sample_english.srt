@@ -1,0 +1,19 @@
+1
+00:00:00,500 --> 00:00:07,450
+[HOST]: Welcome to PodcastAI! Today, we're diving into the future of conversational AI and natural speech synthesis powered by Sarvam AI.
+
+2
+00:00:07,799 --> 00:00:18,109
+[GUEST]: Thanks for having me, Shubh! It's truly fascinating how Sarvam's Bulbul engine captures the genuine cadence and cultural nuances of Indian speakers.
+
+3
+00:00:18,410 --> 00:00:26,019
+[HOST]: Right! Traditional TTS always felt a bit robotic, but here the dialogue flows naturally with expressive pauses and realistic interaction.
+
+4
+00:00:26,420 --> 00:00:37,000
+[GUEST]: Exactly. And being able to generate complete multi-speaker episodes on demand opens up incredible possibilities for creators and educators alike.
+
+5
+00:00:37,350 --> 00:00:42,329
+[HOST]: That's a wrap for this quick spotlight! Stay tuned for more cutting-edge audio innovations on PodcastAI.
