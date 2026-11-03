@@ -3,7 +3,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from app.api.episodes import router as episodes_router
 from app.api.events import router as events_router
@@ -22,9 +22,9 @@ logger = logging.getLogger("podcastai")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing PodcastAI Backend...")
-    # Validate API key (fails fast if missing)
-    settings.validate_api_key()
-    # Initialize SQLite database
+    # Validate API key (logs warning if missing, allows graceful boot)
+    settings.validate_api_key(raise_error=False)
+    # Initialize SQLite database and auto-migrate schema
     init_db()
     logger.info("Database initialized. Ready to generate podcasts.")
     yield
@@ -63,19 +63,31 @@ app.include_router(export_router)
 
 @app.get("/api/health")
 def health_check():
+    has_key = bool(settings.SARVAM_API_KEY and not settings.SARVAM_API_KEY.startswith("your_"))
     return {
-        "status": "healthy",
+        "status": "healthy" if has_key else "needs_configuration",
         "service": "PodcastAI Backend",
-        "sarvam_connected": bool(settings.SARVAM_API_KEY),
+        "sarvam_connected": has_key,
+        "message": "System ready" if has_key else "SARVAM_API_KEY is required to generate audio. Configure it in Render environment settings.",
     }
 
 # Mount static storage for assets
 app.mount("/assets/music", StaticFiles(directory=str(settings.MUSIC_DIR)), name="music")
 
-# Mount frontend production build as catch-all at the very end
+# Mount frontend production build as catch-all SPA at the very end
 frontend_dist = settings.BASE_DIR / "frontend" / "dist"
 if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+    # Mount hashed Vite static assets (/assets/index-*.js, /assets/index-*.css)
+    if (frontend_dist / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="frontend-assets")
+
+    # Catch-all route to serve SPA index.html for client-side routing
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        file_path = frontend_dist / full_path
+        if full_path and file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(frontend_dist / "index.html")
 
 if __name__ == "__main__":
     import uvicorn

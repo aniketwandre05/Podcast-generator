@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: podcast-generator
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: PORT
+        value: 10000

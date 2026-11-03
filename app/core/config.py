@@ -42,13 +42,16 @@ class Settings:
     
     # Startup validation
     @classmethod
-    def validate_api_key(cls):
-        if not cls.SARVAM_API_KEY or cls.SARVAM_API_KEY.startswith("your_"):
+    def validate_api_key(cls, raise_error: bool = False) -> bool:
+        is_valid = bool(cls.SARVAM_API_KEY and not cls.SARVAM_API_KEY.startswith("your_"))
+        if not is_valid:
             print("\n" + "=" * 60, file=sys.stderr)
-            print("ERROR: SARVAM_API_KEY is missing or invalid!", file=sys.stderr)
-            print("Please set your API key in .env or via the environment.", file=sys.stderr)
+            print("WARNING: SARVAM_API_KEY is not configured or is a placeholder.", file=sys.stderr)
+            print("Please configure SARVAM_API_KEY in Render environment settings or .env file.", file=sys.stderr)
             print("=" * 60 + "\n", file=sys.stderr)
-            raise RuntimeError("SARVAM_API_KEY is not configured. Backend cannot start.")
+            if raise_error:
+                raise RuntimeError("SARVAM_API_KEY is not configured. Backend cannot start.")
+        return is_valid
 
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))

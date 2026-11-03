@@ -341,91 +341,96 @@ async def run_full_podcast_pipeline(episode_id: str):
 
 async def regenerate_episode_audio(episode_id: str):
     """Regenerate only audio from updated script without rewriting text."""
-    db = SessionLocal()
     try:
-        ep = db.query(Episode).filter(Episode.id == episode_id).first()
-        if not ep or not ep.script:
-            return
-        script_dict = ep.script
-        speakers = ep.speakers_config
-        background_music = ep.background_music
-        music_volume = ep.music_volume
-        language = ep.language
-    finally:
-        db.close()
+        db = SessionLocal()
+        try:
+            ep = db.query(Episode).filter(Episode.id == episode_id).first()
+            if not ep or not ep.script:
+                return
+            script_dict = ep.script
+            speakers = ep.speakers_config
+            background_music = ep.background_music
+            music_volume = ep.music_volume
+            language = ep.language
+        finally:
+            db.close()
 
-    script = Script(**script_dict)
-    speaker_map = {s.get("speaker_id"): s for s in speakers}
+        script = Script(**script_dict)
+        speaker_map = {s.get("speaker_id"): s for s in speakers}
 
-    all_turns = []
-    for seg in script.segments:
-        for turn in seg.turns:
-            all_turns.append(turn)
+        all_turns = []
+        for seg in script.segments:
+            for turn in seg.turns:
+                all_turns.append(turn)
 
-    total_turns = len(all_turns)
-    turn_audio_list = []
+        total_turns = len(all_turns)
+        turn_audio_list = []
 
-    update_episode_status(episode_id, "synthesizing", 10, "Regenerating audio for turns...")
-    await publish_episode_event(episode_id, "progress", {"status": "synthesizing", "percent": 10, "message": "Synthesizing modified turns..."})
+        update_episode_status(episode_id, "synthesizing", 10, "Regenerating audio for turns...")
+        await publish_episode_event(episode_id, "progress", {"status": "synthesizing", "percent": 10, "message": "Synthesizing modified turns..."})
 
-    for idx, turn in enumerate(all_turns):
-        pct = 10 + int(((idx + 1) / max(1, total_turns)) * 75)
-        update_episode_status(episode_id, "synthesizing", pct, f"Turn {idx + 1}/{total_turns}...")
-        await publish_episode_event(episode_id, "progress", {"status": "synthesizing", "percent": pct, "message": f"Turn {idx + 1}/{total_turns}..."})
+        for idx, turn in enumerate(all_turns):
+            pct = 10 + int(((idx + 1) / max(1, total_turns)) * 75)
+            update_episode_status(episode_id, "synthesizing", pct, f"Turn {idx + 1}/{total_turns}...")
+            await publish_episode_event(episode_id, "progress", {"status": "synthesizing", "percent": pct, "message": f"Turn {idx + 1}/{total_turns}..."})
 
-        sp_config = speaker_map.get(turn.speaker, speakers[0])
-        voice = sp_config.get("voice", "shubh")
-        pace = float(sp_config.get("pace", 1.0))
-        turn_lang = turn.language_code or sp_config.get("language_code", language)
+            sp_config = speaker_map.get(turn.speaker, speakers[0])
+            voice = sp_config.get("voice", "shubh")
+            pace = float(sp_config.get("pace", 1.0))
+            turn_lang = turn.language_code or sp_config.get("language_code", language)
 
-        audio_chunks = await synthesize_turn_text(
-            text=turn.text,
-            voice=voice,
-            language_code=turn_lang,
-            pace=pace,
-            model="bulbul:v3",
+            audio_chunks = await synthesize_turn_text(
+                text=turn.text,
+                voice=voice,
+                language_code=turn_lang,
+                pace=pace,
+                model="bulbul:v3",
+            )
+            if len(audio_chunks) == 1:
+                turn_wav = audio_chunks[0]
+            else:
+                from app.audio.processor import read_wav_bytes, write_wav_bytes
+                import numpy as np
+                combined = [read_wav_bytes(c)[0] for c in audio_chunks]
+                turn_wav = write_wav_bytes(np.concatenate(combined))
+
+            turn_audio_list.append((turn.model_dump(), turn_wav))
+
+        update_episode_status(episode_id, "mixing", 90, "Re-mixing episode...")
+        master_wav_bytes, turn_timestamps, duration_s = mix_podcast_episode(
+            turn_audio_bytes_list=turn_audio_list,
+            music_track_name=background_music,
+            music_volume=music_volume,
         )
-        if len(audio_chunks) == 1:
-            turn_wav = audio_chunks[0]
-        else:
-            from app.audio.processor import read_wav_bytes, write_wav_bytes
-            import numpy as np
-            combined = [read_wav_bytes(c)[0] for c in audio_chunks]
-            turn_wav = write_wav_bytes(np.concatenate(combined))
 
-        turn_audio_list.append((turn.model_dump(), turn_wav))
+        ep_dir = settings.STORAGE_DIR / episode_id
+        ep_dir.mkdir(parents=True, exist_ok=True)
+        wav_file_path = ep_dir / "master.wav"
+        wav_file_path.write_bytes(master_wav_bytes)
 
-    update_episode_status(episode_id, "mixing", 90, "Re-mixing episode...")
-    master_wav_bytes, turn_timestamps, duration_s = mix_podcast_episode(
-        turn_audio_bytes_list=turn_audio_list,
-        music_track_name=background_music,
-        music_volume=music_volume,
-    )
+        (ep_dir / "transcript.srt").write_text(generate_srt(turn_timestamps), encoding="utf-8")
+        (ep_dir / "transcript.vtt").write_text(generate_vtt(turn_timestamps), encoding="utf-8")
+        (ep_dir / "transcript.json").write_text(json.dumps(turn_timestamps, indent=2), encoding="utf-8")
 
-    ep_dir = settings.STORAGE_DIR / episode_id
-    ep_dir.mkdir(parents=True, exist_ok=True)
-    wav_file_path = ep_dir / "master.wav"
-    wav_file_path.write_bytes(master_wav_bytes)
+        db = SessionLocal()
+        try:
+            ep = db.query(Episode).filter(Episode.id == episode_id).first()
+            if ep:
+                ep.duration_seconds = duration_s
+                ep.status = "completed"
+                ep.progress_percent = 100
+                ep.status_message = "Audio updated!"
+                db.commit()
+        finally:
+            db.close()
 
-    (ep_dir / "transcript.srt").write_text(generate_srt(turn_timestamps), encoding="utf-8")
-    (ep_dir / "transcript.vtt").write_text(generate_vtt(turn_timestamps), encoding="utf-8")
-    (ep_dir / "transcript.json").write_text(json.dumps(turn_timestamps, indent=2), encoding="utf-8")
-
-    db = SessionLocal()
-    try:
-        ep = db.query(Episode).filter(Episode.id == episode_id).first()
-        if ep:
-            ep.duration_seconds = duration_s
-            ep.status = "completed"
-            ep.progress_percent = 100
-            ep.status_message = "Audio updated!"
-            db.commit()
-    finally:
-        db.close()
-
-    update_episode_status(episode_id, "completed", 100, "Audio updated!")
-    await publish_episode_event(episode_id, "completed", {
-        "duration_seconds": duration_s,
-        "audio_url": f"/api/episodes/{episode_id}/export?format=wav",
-    })
+        update_episode_status(episode_id, "completed", 100, "Audio updated!")
+        await publish_episode_event(episode_id, "completed", {
+            "duration_seconds": duration_s,
+            "audio_url": f"/api/episodes/{episode_id}/export?format=wav",
+        })
+    except Exception as e:
+        logger.exception(f"Audio regeneration error on episode {episode_id}: {e}")
+        update_episode_status(episode_id, "failed", 0, "Audio generation failed", error_message=str(e))
+        await publish_episode_event(episode_id, "error", {"error": str(e)})
 
