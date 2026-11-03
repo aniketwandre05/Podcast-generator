@@ -19,6 +19,8 @@ from app.models.schemas import Script
 from app.research.provider import (
     DocumentResearchProvider,
     WebUrlResearchProvider,
+    YouTubeResearchProvider,
+    is_youtube_url,
     summarize_and_build_brief,
 )
 from app.sarvam.tts import synthesize_turn_text
@@ -104,16 +106,59 @@ async def run_full_podcast_pipeline(episode_id: str):
         update_episode_status(episode_id, "researching", 10, "Extracting and synthesizing source research material...")
         await publish_episode_event(episode_id, "progress", {"status": "researching", "percent": 10, "message": "Extracting source research..."})
 
-        raw_material = source_content
+        # Load sources list from episode
+        db = SessionLocal()
+        try:
+            ep_item = db.query(Episode).filter(Episode.id == episode_id).first()
+            ep_sources = ep_item.sources if ep_item else []
+        finally:
+            db.close()
+
         sources_list = []
-        if source_type == "url" and source_content.startswith(("http://", "https://")):
-            sources_list.append(source_content)
-            web_prov = WebUrlResearchProvider()
-            raw_material = await web_prov.extract_text(source_content)
-        elif source_type == "document" and os.path.exists(source_content):
-            sources_list.append(os.path.basename(source_content))
-            doc_prov = DocumentResearchProvider()
-            raw_material = await doc_prov.extract_text(source_content)
+        raw_material_parts = []
+
+        if ep_sources:
+            for s_idx, src in enumerate(ep_sources, start=1):
+                stype = src.get("source_type", "text")
+                stitle = src.get("title", f"Source {s_idx}")
+                scontent = src.get("content", "")
+                sources_list.append(stitle)
+
+                if stype in ["file", "document"]:
+                    if os.path.exists(scontent):
+                        doc_prov = DocumentResearchProvider()
+                        extracted = await doc_prov.extract_text(scontent)
+                    else:
+                        extracted = scontent
+                    raw_material_parts.append(f"### [Document: {stitle}]\n{extracted}")
+                elif stype == "youtube" or is_youtube_url(scontent):
+                    yt_prov = YouTubeResearchProvider()
+                    extracted = await yt_prov.extract_text(scontent)
+                    raw_material_parts.append(f"### [YouTube Video: {stitle}]\n{extracted}")
+                elif stype == "url" and scontent.startswith(("http://", "https://")):
+                    web_prov = WebUrlResearchProvider()
+                    extracted = await web_prov.extract_text(scontent)
+                    raw_material_parts.append(f"### [Web Article: {stitle}]\n{extracted}")
+                else:
+                    raw_material_parts.append(f"### [Notes: {stitle}]\n{scontent}")
+
+            raw_material = "\n\n".join(raw_material_parts)
+        else:
+            raw_material = source_content
+            if (source_type == "youtube" or is_youtube_url(source_content)) and source_content.startswith(("http://", "https://")):
+                sources_list.append("YouTube Video")
+                yt_prov = YouTubeResearchProvider()
+                raw_material = await yt_prov.extract_text(source_content)
+            elif source_type == "url" and source_content.startswith(("http://", "https://")):
+                sources_list.append(source_content)
+                web_prov = WebUrlResearchProvider()
+                raw_material = await web_prov.extract_text(source_content)
+            elif source_type == "document" and os.path.exists(source_content):
+                sources_list.append(os.path.basename(source_content))
+                doc_prov = DocumentResearchProvider()
+                raw_material = await doc_prov.extract_text(source_content)
+            elif source_content:
+                sources_list.append("Input Material")
 
         research_brief = await summarize_and_build_brief(raw_material, topic, sources_list)
         

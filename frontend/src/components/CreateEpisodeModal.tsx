@@ -15,8 +15,13 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
+  Video,
+  Link2,
+  Plus,
+  FilePlus,
+  Layers,
 } from 'lucide-react';
-import type { SpeakerConfig } from '../types';
+import type { SpeakerConfig, SourceItem } from '../types';
 
 interface CreateEpisodeModalProps {
   isOpen: boolean;
@@ -78,20 +83,24 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [previewPlaying, setPreviewPlaying] = useState<string | null>(null);
 
-  // Document upload & drag-and-drop state
-  const [docInputMode, setDocInputMode] = useState<'upload' | 'paste'>('upload');
-  const [uploadedDoc, setUploadedDoc] = useState<{
-    name: string;
-    size: number;
-    type: string;
-    words: number;
-    path: string;
-    extractedText: string;
-  } | null>(null);
+  // Multi-source state (NotebookLM style: multi-file, YouTube, Web links, notes)
+  const [sourcesList, setSourcesList] = useState<SourceItem[]>([]);
+  const [activeSourceTab, setActiveSourceTab] = useState<'files' | 'link' | 'note'>('files');
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [docUploadError, setDocUploadError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [showExtractedPreview, setShowExtractedPreview] = useState(false);
+
+  // Link input state (YouTube / Web)
+  const [linkInput, setLinkInput] = useState('');
+  const [isAddingLink, setIsAddingLink] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  // Quick note state
+  const [noteTitle, setNoteTitle] = useState('');
+  const [noteContent, setNoteContent] = useState('');
+
+  // Preview source modal/accordion
+  const [previewingSourceId, setPreviewingSourceId] = useState<string | null>(null);
 
   const [speakers, setSpeakers] = useState<SpeakerConfig[]>([
     { speaker_id: 'HOST', display_name: 'Shubh', voice: 'shubh', pace: 1.0, language_code: 'en-IN' },
@@ -101,65 +110,67 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
 
   if (!isOpen) return null;
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
+  const formatBytes = (bytes?: number) => {
+    if (!bytes || bytes === 0) return '0 Bytes';
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  const handleFileUpload = async (file: File) => {
+  const handleUploadFiles = async (fileList: FileList | File[]) => {
     setDocUploadError(null);
+    const validFiles: File[] = [];
     const validExtensions = ['.pdf', '.docx', '.txt', '.md'];
-    const fileName = file.name.toLowerCase();
-    const hasValidExt = validExtensions.some((ext) => fileName.endsWith(ext));
 
-    if (!hasValidExt) {
-      setDocUploadError('Unsupported format. Please upload a PDF, Word (.docx), Markdown (.md), or Text (.txt) file.');
-      return;
+    for (let i = 0; i < fileList.length; i++) {
+      const f = fileList[i];
+      const name = f.name.toLowerCase();
+      if (validExtensions.some((ext) => name.endsWith(ext))) {
+        validFiles.push(f);
+      }
     }
 
-    if (file.size > 25 * 1024 * 1024) {
-      setDocUploadError('File exceeds 25MB limit.');
+    if (validFiles.length === 0) {
+      setDocUploadError('Unsupported format. Please upload PDF, Word (.docx), Markdown (.md), or Text (.txt) files.');
       return;
     }
 
     setIsUploadingDoc(true);
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      validFiles.forEach((f) => formData.append('files', f));
 
-      const res = await fetch('/api/episodes/upload-doc', {
+      const res = await fetch('/api/episodes/upload-docs', {
         method: 'POST',
         body: formData,
       });
 
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || 'Failed to upload document');
+        throw new Error('Failed to upload and extract documents.');
       }
 
       const data = await res.json();
-      setUploadedDoc({
-        name: data.filename,
-        size: data.file_size,
-        type: data.file_type,
-        words: data.word_count,
-        path: data.saved_path,
-        extractedText: data.extracted_text,
-      });
+      if (data.sources && data.sources.length > 0) {
+        const newItems: SourceItem[] = data.sources.map((s: any) => ({
+          id: s.id,
+          source_type: 'file',
+          title: s.title,
+          content: s.content, // file path for generator
+          file_type: s.file_type,
+          file_size: s.file_size,
+          word_count: s.word_count,
+        }));
 
-      // Pass the extracted content to the generator
-      setSourceContent(data.extracted_text);
+        setSourcesList((prev) => [...prev, ...newItems]);
 
-      // Auto-suggest episode topic if user has not typed one
-      if (!topic.trim() && data.suggested_title) {
-        setTopic(data.suggested_title);
+        if (!topic.trim() && newItems.length > 0) {
+          setTopic(newItems[0].title);
+        }
       }
     } catch (err: any) {
-      console.error('Document upload error:', err);
-      setDocUploadError(err.message || 'Error processing document.');
+      console.error(err);
+      setDocUploadError(err.message || 'Error processing documents.');
     } finally {
       setIsUploadingDoc(false);
     }
@@ -171,8 +182,7 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
     setIsDragOver(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      handleFileUpload(file);
+      handleUploadFiles(e.dataTransfer.files);
     }
   };
 
@@ -188,10 +198,73 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
     setIsDragOver(false);
   };
 
-  const handleRemoveDoc = () => {
-    setUploadedDoc(null);
-    setSourceContent('');
-    setDocUploadError(null);
+  const handleAddLink = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!linkInput.trim()) return;
+
+    setLinkError(null);
+    setIsAddingLink(true);
+
+    try {
+      const res = await fetch('/api/episodes/extract-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: linkInput.trim() }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Could not extract content from URL');
+      }
+
+      const data = await res.json();
+      const newItem: SourceItem = {
+        id: Math.random().toString(36).substring(7),
+        source_type: data.source_type, // 'youtube' or 'url'
+        title: data.title || (data.source_type === 'youtube' ? 'YouTube Video' : 'Web Article'),
+        content: data.content,
+        url: data.url,
+        author: data.author,
+        word_count: data.word_count || 0,
+        has_transcript: data.has_transcript || false,
+      };
+
+      setSourcesList((prev) => [...prev, newItem]);
+      setLinkInput('');
+
+      if (!topic.trim() && newItem.title) {
+        setTopic(newItem.title);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setLinkError(err.message || 'Failed to extract content from link.');
+    } finally {
+      setIsAddingLink(false);
+    }
+  };
+
+  const handleAddNote = () => {
+    if (!noteContent.trim()) return;
+    const title = noteTitle.trim() || `Notes ${sourcesList.length + 1}`;
+    const words = noteContent.trim().split(/\s+/).filter(Boolean).length;
+    const newItem: SourceItem = {
+      id: Math.random().toString(36).substring(7),
+      source_type: 'text',
+      title,
+      content: noteContent.trim(),
+      word_count: words,
+    };
+    setSourcesList((prev) => [...prev, newItem]);
+    setNoteTitle('');
+    setNoteContent('');
+
+    if (!topic.trim()) {
+      setTopic(title);
+    }
+  };
+
+  const handleRemoveSource = (id?: string) => {
+    setSourcesList((prev) => prev.filter((s) => s.id !== id));
   };
 
   const handleSpeakerChange = (index: number, field: keyof SpeakerConfig, value: any) => {
@@ -246,7 +319,7 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           topic,
-          source_type: sourceType,
+          source_type: sourcesList.length > 0 ? 'multi_source' : sourceType,
           source_content: sourceContent,
           language,
           dialogue_style: dialogueStyle,
@@ -255,6 +328,7 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
           speakers: activeSpeakers,
           background_music: bgMusic,
           music_volume: 0.12,
+          sources: sourcesList.length > 0 ? sourcesList : undefined,
         }),
       });
 
@@ -323,13 +397,13 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
                   sourceType === 'document' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <FileText className="h-3.5 w-3.5" />
-                <span>Doc / Notes</span>
+                <Layers className="h-3.5 w-3.5 text-indigo-300" />
+                <span>Research Studio</span>
               </button>
             </div>
           </div>
 
-          {/* Topic & Details */}
+          {/* Episode Topic / Title */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
               Episode Topic / Title
@@ -344,7 +418,7 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
             />
           </div>
 
-          {/* Extra source content (URL or Document upload/paste) */}
+          {/* Single Web URL mode */}
           {sourceType === 'url' && (
             <div>
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
@@ -360,172 +434,120 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
             </div>
           )}
 
+          {/* Multi-Source NotebookLM-style Research Studio */}
           {sourceType === 'document' && (
-            <div className="space-y-3">
-              {/* Document Mode Toggle: Upload vs Paste */}
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                  Document Source
-                </label>
-                <div className="flex items-center space-x-1 p-0.5 bg-slate-950 rounded-lg border border-slate-800 text-[11px]">
+            <div className="space-y-4 p-4 bg-slate-950/70 border border-slate-800/80 rounded-2xl">
+              {/* Studio Header & Sub-Tabs */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center space-x-2">
+                  <Layers className="h-4 w-4 text-indigo-400" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-200">
+                    NotebookLM Multi-Source Studio
+                  </span>
+                </div>
+                <div className="flex items-center space-x-1 p-0.5 bg-slate-900 rounded-lg border border-slate-800 text-[11px]">
                   <button
                     type="button"
-                    onClick={() => setDocInputMode('upload')}
-                    className={`px-2.5 py-1 rounded-md transition-colors ${
-                      docInputMode === 'upload'
+                    onClick={() => setActiveSourceTab('files')}
+                    className={`px-2.5 py-1 rounded-md flex items-center space-x-1 transition-colors ${
+                      activeSourceTab === 'files'
                         ? 'bg-indigo-600 text-white font-medium shadow-sm'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    Upload Document
+                    <FilePlus className="h-3 w-3" />
+                    <span>Drop Files</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDocInputMode('paste')}
-                    className={`px-2.5 py-1 rounded-md transition-colors ${
-                      docInputMode === 'paste'
+                    onClick={() => setActiveSourceTab('link')}
+                    className={`px-2.5 py-1 rounded-md flex items-center space-x-1 transition-colors ${
+                      activeSourceTab === 'link'
                         ? 'bg-indigo-600 text-white font-medium shadow-sm'
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    Paste Text / Notes
+                    <Video className="h-3 w-3" />
+                    <span>YouTube / Web</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSourceTab('note')}
+                    className={`px-2.5 py-1 rounded-md flex items-center space-x-1 transition-colors ${
+                      activeSourceTab === 'note'
+                        ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <FileText className="h-3 w-3" />
+                    <span>Notes</span>
                   </button>
                 </div>
               </div>
 
-              {docInputMode === 'upload' ? (
+              {/* Sub-Tab 1: Multi-File Drag & Drop */}
+              {activeSourceTab === 'files' && (
                 <div>
-                  {!uploadedDoc ? (
-                    /* Drag & Drop Upload Zone */
-                    <div
-                      onDrop={handleDrop}
-                      onDragOver={handleDragOver}
-                      onDragLeave={handleDragLeave}
-                      onClick={() => document.getElementById('file-upload-input')?.click()}
-                      className={`relative border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
-                        isDragOver
-                          ? 'border-indigo-500 bg-indigo-500/10 ring-4 ring-indigo-500/20'
-                          : 'border-slate-800 hover:border-indigo-500/60 bg-slate-950/60 hover:bg-slate-950'
-                      }`}
-                    >
-                      <input
-                        id="file-upload-input"
-                        type="file"
-                        accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
-                        className="hidden"
-                        onChange={(e) => {
-                          if (e.target.files && e.target.files[0]) {
-                            handleFileUpload(e.target.files[0]);
-                          }
-                        }}
-                      />
+                  <div
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onClick={() => document.getElementById('multi-file-input')?.click()}
+                    className={`relative border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                      isDragOver
+                        ? 'border-indigo-500 bg-indigo-500/10 ring-4 ring-indigo-500/20'
+                        : 'border-slate-800 hover:border-indigo-500/60 bg-slate-900/60 hover:bg-slate-900'
+                    }`}
+                  >
+                    <input
+                      id="multi-file-input"
+                      type="file"
+                      multiple
+                      accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files.length > 0) {
+                          handleUploadFiles(e.target.files);
+                        }
+                      }}
+                    />
 
-                      {isUploadingDoc ? (
-                        <div className="py-4 flex flex-col items-center justify-center space-y-2">
-                          <Loader2 className="h-8 w-8 text-indigo-400 animate-spin" />
-                          <p className="text-sm font-medium text-slate-200">Parsing and extracting text...</p>
-                          <p className="text-xs text-slate-400">Processing document structure and content</p>
+                    {isUploadingDoc ? (
+                      <div className="py-3 flex flex-col items-center justify-center space-y-2">
+                        <Loader2 className="h-8 w-8 text-indigo-400 animate-spin" />
+                        <p className="text-sm font-medium text-slate-200">Parsing and extracting documents...</p>
+                        <p className="text-xs text-slate-400">Extracting chapters, word counts, and key themes</p>
+                      </div>
+                    ) : (
+                      <div className="py-2 flex flex-col items-center justify-center space-y-2">
+                        <div className="p-3 bg-indigo-500/10 rounded-2xl text-indigo-400 border border-indigo-500/20">
+                          <UploadCloud className="h-7 w-7" />
                         </div>
-                      ) : (
-                        <div className="py-2 flex flex-col items-center justify-center space-y-2">
-                          <div className="p-3 bg-indigo-500/10 rounded-2xl text-indigo-400 border border-indigo-500/20">
-                            <UploadCloud className="h-7 w-7" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-slate-200">
-                              <span className="text-indigo-400">Click to upload</span> or drag and drop document
-                            </p>
-                            <p className="text-xs text-slate-400 mt-0.5">
-                              Supports PDF, Word (.docx), Markdown (.md), or Plain Text (.txt) up to 25MB
-                            </p>
-                          </div>
-                          <div className="flex items-center space-x-1.5 pt-1">
-                            <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20 font-bold">
-                              PDF
-                            </span>
-                            <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-bold">
-                              DOCX
-                            </span>
-                            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-bold">
-                              TXT
-                            </span>
-                            <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-bold">
-                              MD
-                            </span>
-                          </div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-200">
+                            <span className="text-indigo-400">Click to upload</span> or drag and drop files
+                          </p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            Upload multiple PDF, Word (.docx), Markdown (.md), or Text (.txt) files simultaneously
+                          </p>
                         </div>
-                      )}
-                    </div>
-                  ) : (
-                    /* Uploaded Document Info Card */
-                    <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
-                          <div
-                            className={`p-2.5 rounded-xl border ${
-                              uploadedDoc.type === 'pdf'
-                                ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-                                : uploadedDoc.type === 'docx'
-                                ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            }`}
-                          >
-                            <FileCheck className="h-6 w-6" />
-                          </div>
-                          <div>
-                            <div className="text-sm font-semibold text-white flex items-center space-x-2">
-                              <span className="truncate max-w-[240px] sm:max-w-xs">{uploadedDoc.name}</span>
-                              <span className="text-[10px] px-1.5 py-0.5 rounded uppercase font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
-                                {uploadedDoc.type}
-                              </span>
-                            </div>
-                            <div className="text-xs text-slate-400 flex items-center space-x-2 mt-0.5">
-                              <span>{formatBytes(uploadedDoc.size)}</span>
-                              <span>•</span>
-                              <span className="text-emerald-400 font-medium">
-                                {uploadedDoc.words.toLocaleString()} words extracted
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center space-x-1">
-                          <button
-                            type="button"
-                            onClick={() => setShowExtractedPreview(!showExtractedPreview)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                            title={showExtractedPreview ? 'Hide Preview' : 'View Extracted Text'}
-                          >
-                            {showExtractedPreview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleRemoveDoc}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                            title="Remove Document"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                        <div className="flex items-center space-x-1.5 pt-1">
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20 font-bold">
+                            PDF
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-bold">
+                            DOCX
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-bold">
+                            TXT
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-bold">
+                            MD
+                          </span>
                         </div>
                       </div>
-
-                      {/* Extracted Content Accordion/Editor */}
-                      {showExtractedPreview && (
-                        <div className="pt-2 border-t border-slate-800/80">
-                          <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1.5">
-                            <span>Extracted Text Content</span>
-                            <span>{sourceContent.split(/\s+/).filter(Boolean).length} words</span>
-                          </div>
-                          <textarea
-                            rows={4}
-                            value={sourceContent}
-                            onChange={(e) => setSourceContent(e.target.value)}
-                            className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
 
                   {docUploadError && (
                     <div className="mt-2 p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center space-x-2 text-xs text-rose-300">
@@ -534,20 +556,221 @@ export const CreateEpisodeModal: React.FC<CreateEpisodeModalProps> = ({ isOpen, 
                     </div>
                   )}
                 </div>
-              ) : (
-                /* Direct Text / Notes Paste */
-                <div>
-                  <textarea
-                    rows={4}
-                    value={sourceContent}
-                    onChange={(e) => setSourceContent(e.target.value)}
-                    placeholder="Paste article, study notes, or transcript excerpts here..."
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-slate-500"
-                  />
-                  <div className="flex justify-between text-[11px] text-slate-500 mt-1">
-                    <span>Grounded factual extraction mode</span>
-                    <span>{sourceContent.split(/\s+/).filter(Boolean).length} words</span>
+              )}
+
+              {/* Sub-Tab 2: YouTube / Web Link Ingestion */}
+              {activeSourceTab === 'link' && (
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2">
+                    <div className="relative flex-1">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                        <Link2 className="h-4 w-4" />
+                      </div>
+                      <input
+                        type="url"
+                        value={linkInput}
+                        onChange={(e) => setLinkInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddLink();
+                          }
+                        }}
+                        placeholder="https://youtube.com/watch?v=... or https://example.com/article"
+                        className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-slate-500"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAddLink()}
+                      disabled={isAddingLink || !linkInput.trim()}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors shrink-0"
+                    >
+                      {isAddingLink ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <span>Extracting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>Extract & Add</span>
+                        </>
+                      )}
+                    </button>
                   </div>
+                  <p className="text-[11px] text-slate-400">
+                    💡 Paste any YouTube video URL to automatically fetch spoken transcripts, titles, and channel metadata, or paste any blog/news article.
+                  </p>
+
+                  {linkError && (
+                    <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center space-x-2 text-xs text-rose-300">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                      <span>{linkError}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sub-Tab 3: Custom Notes */}
+              {activeSourceTab === 'note' && (
+                <div className="space-y-2.5">
+                  <input
+                    type="text"
+                    value={noteTitle}
+                    onChange={(e) => setNoteTitle(e.target.value)}
+                    placeholder="Note title (e.g. Host Talking Points / Meeting Notes)"
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-100 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <textarea
+                    rows={3}
+                    value={noteContent}
+                    onChange={(e) => setNoteContent(e.target.value)}
+                    placeholder="Write or paste your custom research, outline ideas, or interview questions..."
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-100 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder-slate-500"
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleAddNote}
+                      disabled={!noteContent.trim()}
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium rounded-xl flex items-center space-x-1.5 transition-colors"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Add Note to Sources</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Ingested Sources Deck */}
+              {sourcesList.length > 0 ? (
+                <div className="pt-2 border-t border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-semibold text-white">Ingested Sources</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-bold border border-indigo-500/30">
+                        {sourcesList.length} items
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        ({sourcesList.reduce((acc, s) => acc + (s.word_count || 0), 0).toLocaleString()} words total)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSourcesList([])}
+                      className="text-[11px] text-slate-400 hover:text-rose-400 transition-colors"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                    {sourcesList.map((s) => (
+                      <div
+                        key={s.id}
+                        className="p-2.5 bg-slate-900/90 border border-slate-800/90 rounded-xl flex flex-col space-y-1.5 transition-all hover:border-slate-700"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2.5 min-w-0">
+                            {/* Type Icon Badge */}
+                            {s.source_type === 'youtube' && (
+                              <div className="p-1.5 bg-rose-500/10 text-rose-400 rounded-lg border border-rose-500/20 shrink-0">
+                                <Video className="h-3.5 w-3.5" />
+                              </div>
+                            )}
+                            {s.source_type === 'file' && (
+                              <div className="p-1.5 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 shrink-0">
+                                <FileCheck className="h-3.5 w-3.5" />
+                              </div>
+                            )}
+                            {s.source_type === 'url' && (
+                              <div className="p-1.5 bg-emerald-500/10 text-emerald-400 rounded-lg border border-emerald-500/20 shrink-0">
+                                <Globe className="h-3.5 w-3.5" />
+                              </div>
+                            )}
+                            {s.source_type === 'text' && (
+                              <div className="p-1.5 bg-purple-500/10 text-purple-400 rounded-lg border border-purple-500/20 shrink-0">
+                                <FileText className="h-3.5 w-3.5" />
+                              </div>
+                            )}
+
+                            {/* Title & Metadata */}
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-slate-100 truncate max-w-[280px] sm:max-w-sm">
+                                {s.title}
+                              </p>
+                              <div className="text-[10px] text-slate-400 flex items-center space-x-1.5">
+                                {s.source_type === 'youtube' && (
+                                  <span className="text-rose-400 font-medium">YouTube Transcript</span>
+                                )}
+                                {s.source_type === 'file' && (
+                                  <span className="uppercase text-blue-400 font-medium">{s.file_type}</span>
+                                )}
+                                {s.source_type === 'url' && (
+                                  <span className="text-emerald-400 font-medium">Web Article</span>
+                                )}
+                                {s.source_type === 'text' && (
+                                  <span className="text-purple-400 font-medium">Custom Note</span>
+                                )}
+                                <span>•</span>
+                                <span>{(s.word_count || 0).toLocaleString()} words</span>
+                                {s.file_size ? (
+                                  <>
+                                    <span>•</span>
+                                    <span>{formatBytes(s.file_size)}</span>
+                                  </>
+                                ) : null}
+                                {s.author && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="truncate max-w-[120px]">{s.author}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center space-x-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewingSourceId(previewingSourceId === s.id ? null : (s.id || null))}
+                              className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
+                              title={previewingSourceId === s.id ? 'Hide Content' : 'Preview Content'}
+                            >
+                              {previewingSourceId === s.id ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSource(s.id)}
+                              className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-rose-500/10 transition-colors"
+                              title="Remove Source"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expandable Preview */}
+                        {previewingSourceId === s.id && (
+                          <div className="p-2.5 bg-slate-950 rounded-lg border border-slate-800 text-[11px] text-slate-300 font-mono whitespace-pre-wrap max-h-32 overflow-y-auto">
+                            {s.content ? (
+                              s.content.length > 500 ? `${s.content.slice(0, 500)}...` : s.content
+                            ) : (
+                              <span className="italic text-slate-500">File uploaded and stored for server-side synthesis.</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="py-2 px-3 bg-slate-900/40 border border-dashed border-slate-800/80 rounded-xl text-center">
+                  <p className="text-[11px] text-slate-400">
+                    Add files, YouTube videos, or notes above to build your multi-source research dossier.
+                  </p>
                 </div>
               )}
             </div>

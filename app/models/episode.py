@@ -22,6 +22,7 @@ class Episode(Base):
     
     # JSON strings
     _speakers_config = Column("speakers_config", Text, default="[]")
+    _sources = Column("sources", Text, default="[]")
     _research_brief = Column("research_brief", Text, default="{}")
     _outline = Column("outline", Text, default="{}")
     _script = Column("script", Text, default="{}")
@@ -51,6 +52,17 @@ class Episode(Base):
     @speakers_config.setter
     def speakers_config(self, val: List[Dict[str, Any]]):
         self._speakers_config = json.dumps(val)
+
+    @property
+    def sources(self) -> List[Dict[str, Any]]:
+        try:
+            return json.loads(self._sources) if self._sources else []
+        except Exception:
+            return []
+
+    @sources.setter
+    def sources(self, val: List[Dict[str, Any]]):
+        self._sources = json.dumps(val)
 
     @property
     def research_brief(self) -> Dict[str, Any]:

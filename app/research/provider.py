@@ -56,17 +56,131 @@ class WebUrlResearchProvider(BaseResearchProvider):
                     return f"Could not retrieve URL content (status {resp.status_code})"
 
                 soup = BeautifulSoup(resp.text, "html.parser")
+                # Extract page title
+                page_title = soup.title.string.strip() if soup.title and soup.title.string else url
+
                 # Remove script and style elements
                 for element in soup(["script", "style", "nav", "footer", "header", "noscript"]):
                     element.extract()
                 
                 text = soup.get_text(separator=" ", strip=True)
-                # Clean up excess whitespace
-                clean_text = re.sub(r"\s+", " ", text)
-                return clean_text[:20000] # Cap to 20k chars
+                clean_text = re.sub(r"\s+", " ", text).strip()
+                return f"Title: {page_title}\n\nContent:\n{clean_text[:20000]}"
         except Exception as e:
             logger.error(f"URL extraction error for {url}: {e}")
             return f"Error extracting content from URL: {e}"
+
+def extract_youtube_video_id(url: str) -> Optional[str]:
+    """Extract YouTube 11-character video ID from varied URL formats."""
+    patterns = [
+        r"(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([0-9A-Za-z_-]{11})",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, url)
+        if m:
+            return m.group(1)
+    return None
+
+def is_youtube_url(url: str) -> bool:
+    """Check if a URL points to YouTube."""
+    return bool(extract_youtube_video_id(url))
+
+class YouTubeResearchProvider(BaseResearchProvider):
+    """Extracts metadata and full transcripts from YouTube videos without requiring an API key."""
+
+    async def get_video_metadata(self, video_id: str) -> Dict[str, str]:
+        """Fetch video title and channel/author using public YouTube oEmbed."""
+        title = f"YouTube Video ({video_id})"
+        author = "YouTube Creator"
+        try:
+            oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(oembed_url)
+                if resp.status_code == 200:
+                    meta = resp.json()
+                    title = meta.get("title", title)
+                    author = meta.get("author_name", author)
+        except Exception as e:
+            logger.warning(f"Could not fetch YouTube oEmbed metadata for {video_id}: {e}")
+        return {"title": title, "author": author}
+
+    def fetch_transcript_text(self, video_id: str) -> Optional[str]:
+        """Fetch transcript text using youtube-transcript-api with multi-language fallback."""
+        try:
+            from youtube_transcript_api import YouTubeTranscriptApi
+            api = YouTubeTranscriptApi()
+
+            # First attempt: priority Indian languages + English
+            preferred_langs = ["en", "en-IN", "hi", "hi-IN", "ta", "te", "mr", "bn", "gu", "kn", "ml"]
+            try:
+                transcript_list = api.list(video_id)
+                transcript = transcript_list.find_transcript(preferred_langs)
+                data = transcript.fetch().to_raw_data()
+            except Exception:
+                # Second attempt: try fetch default or iterate any available transcript
+                try:
+                    data = api.fetch(video_id).to_raw_data()
+                except Exception:
+                    # Third attempt: try any transcript in the list
+                    data = None
+                    for t in api.list(video_id):
+                        data = t.fetch().to_raw_data()
+                        break
+
+            if data:
+                text_snippets = [entry.get("text", "") for entry in data if entry.get("text")]
+                full_transcript = " ".join(text_snippets)
+                return re.sub(r"\s+", " ", full_transcript).strip()
+        except Exception as e:
+            logger.warning(f"Transcript extraction failed for YouTube video {video_id}: {e}")
+
+        return None
+
+    async def extract_info(self, url: str) -> Dict[str, Any]:
+        """Extract full details, metadata, and transcript from a YouTube URL."""
+        video_id = extract_youtube_video_id(url)
+        if not video_id:
+            return {
+                "status": "error",
+                "message": "Invalid YouTube URL format.",
+                "url": url,
+            }
+
+        meta = await self.get_video_metadata(video_id)
+        transcript = self.fetch_transcript_text(video_id)
+        has_transcript = bool(transcript and len(transcript) > 50)
+
+        content = (
+            transcript
+            if has_transcript
+            else f"Video Title: {meta['title']} by {meta['author']}. Note: Automatic captions were unavailable on this video; topic research will synthesize around the title and themes."
+        )
+
+        words = len(content.split()) if content else 0
+
+        return {
+            "status": "success",
+            "source_type": "youtube",
+            "video_id": video_id,
+            "title": meta["title"],
+            "author": meta["author"],
+            "url": url,
+            "content": content,
+            "has_transcript": has_transcript,
+            "word_count": words,
+        }
+
+    async def extract_text(self, url: str) -> str:
+        """Extract formatted research text from a YouTube video."""
+        info = await self.extract_info(url)
+        if info.get("status") != "success":
+            return f"Error extracting YouTube video: {info.get('message', 'Unknown error')}"
+
+        header = f"YouTube Video: \"{info['title']}\" by {info['author']} ({info['url']})\n"
+        if info.get("has_transcript"):
+            return f"{header}\nFull Spoken Transcript:\n{info['content'][:25000]}"
+        else:
+            return f"{header}\n{info['content']}"
 
 async def summarize_and_build_brief(
     raw_material: str,

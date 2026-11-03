@@ -1,3 +1,16 @@
+export interface SourceItem {
+  id?: string;
+  source_type: 'file' | 'url' | 'youtube' | 'text';
+  title: string;
+  content: string;
+  file_type?: string;
+  file_size?: number;
+  word_count?: number;
+  author?: string;
+  url?: string;
+  has_transcript?: boolean;
+}
+
 export interface SpeakerConfig {
   speaker_id: string; // HOST, CO_HOST, GUEST
   display_name: string;
@@ -48,6 +61,7 @@ export interface Episode {
   description: string;
   topic: string;
   source_type: string;
+  sources?: SourceItem[];
   language: string;
   dialogue_style?: string;
   tone: string;

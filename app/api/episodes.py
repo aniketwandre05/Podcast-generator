@@ -13,12 +13,19 @@ from app.models.episode import Episode
 from app.models.schemas import (
     EpisodeCreateRequest,
     EpisodeResponse,
+    ExtractUrlRequest,
     ScriptUpdateRequest,
+    SourceItem,
     TranslateEpisodeRequest,
     TurnTranslateRequest,
 )
 from app.pipeline.generator import regenerate_episode_audio, run_full_podcast_pipeline
-from app.research.provider import DocumentResearchProvider
+from app.research.provider import (
+    DocumentResearchProvider,
+    WebUrlResearchProvider,
+    YouTubeResearchProvider,
+    is_youtube_url,
+)
 from app.sarvam.translate import translate_text
 
 logger = logging.getLogger("podcastai.api.episodes")
@@ -32,6 +39,7 @@ def serialize_episode(ep: Episode) -> Dict[str, Any]:
         "description": ep.description,
         "topic": ep.topic,
         "source_type": ep.source_type,
+        "sources": getattr(ep, "sources", []),
         "language": ep.language,
         "dialogue_style": getattr(ep, "dialogue_style", "code_mixed") or "code_mixed",
         "tone": ep.tone,
@@ -76,11 +84,16 @@ def create_episode(
         {"speaker_id": "GUEST", "display_name": "Guest", "voice": "priya", "pace": 1.0, "language_code": req.language},
     ]
 
+    sources_data = [s.model_dump() for s in req.sources] if req.sources else []
+    resolved_source_type = req.source_type
+    if sources_data and resolved_source_type == "prompt":
+        resolved_source_type = "multi_source"
+
     ep = Episode(
         id=episode_id,
         title=f"Episode: {req.topic[:40]}...",
         topic=req.topic,
-        source_type=req.source_type,
+        source_type=resolved_source_type,
         source_content=req.source_content or "",
         language=req.language,
         dialogue_style=req.dialogue_style,
@@ -94,6 +107,7 @@ def create_episode(
         status_message="Episode queued",
     )
     ep.speakers_config = speakers_data
+    ep.sources = sources_data
 
     db.add(ep)
     db.commit()
@@ -295,4 +309,100 @@ async def upload_document(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Failed to process document {filename}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to extract document content: {str(e)}")
+
+@router.post("/upload-docs")
+async def upload_multiple_documents(files: List[UploadFile] = File(...)):
+    """Upload and extract text from multiple documents (PDF, DOCX, TXT, MD) simultaneously."""
+    valid_files = [f for f in files if Path(f.filename or "").suffix.lower() in [".pdf", ".docx", ".txt", ".md"]]
+    if not valid_files:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file format. Supported formats: .pdf, .docx, .txt, .md",
+        )
+
+    results = []
+    temp_dir = settings.DATA_DIR / "uploads"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    prov = DocumentResearchProvider()
+
+    for file in valid_files:
+        filename = file.filename or "uploaded_document"
+        ext = Path(filename).suffix.lower()
+        if ext not in [".pdf", ".docx", ".txt", ".md"]:
+            continue
+
+        contents = await file.read()
+        if len(contents) > 25 * 1024 * 1024:
+            continue
+
+        clean_stem = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", Path(filename).stem)[:50]
+        temp_file = temp_dir / f"{uuid.uuid4().hex[:8]}_{clean_stem}{ext}"
+        temp_file.write_bytes(contents)
+
+        try:
+            extracted_text = await prov.extract_text(str(temp_file))
+            cleaned_text = re.sub(r"\s+", " ", extracted_text).strip()
+            words = len(cleaned_text.split()) if cleaned_text else 0
+            suggested_title = Path(filename).stem.replace("_", " ").replace("-", " ").strip().title()
+
+            results.append({
+                "id": str(uuid.uuid4()),
+                "source_type": "file",
+                "title": suggested_title or filename,
+                "content": str(temp_file),
+                "extracted_preview": cleaned_text[:300] + ("..." if len(cleaned_text) > 300 else ""),
+                "file_type": ext.lstrip("."),
+                "file_size": len(contents),
+                "word_count": words,
+                "filename": filename,
+            })
+        except Exception as e:
+            logger.warning(f"Failed to process document {filename}: {e}")
+
+    return {
+        "status": "success",
+        "sources": results,
+        "total_files": len(results),
+    }
+
+@router.post("/extract-url")
+async def extract_url_content(req: ExtractUrlRequest):
+    """Extract research content from any web article or YouTube video (with transcripts)."""
+    url = req.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid URL format. URL must start with http:// or https://")
+
+    if is_youtube_url(url):
+        yt_prov = YouTubeResearchProvider()
+        info = await yt_prov.extract_info(url)
+        if info.get("status") != "success":
+            raise HTTPException(status_code=400, detail=info.get("message", "Could not process YouTube URL"))
+
+        return {
+            "status": "success",
+            "source_type": "youtube",
+            "title": info.get("title"),
+            "author": info.get("author"),
+            "content": info.get("content"),
+            "url": url,
+            "has_transcript": info.get("has_transcript", False),
+            "word_count": info.get("word_count", 0),
+        }
+    else:
+        web_prov = WebUrlResearchProvider()
+        text = await web_prov.extract_text(url)
+        words = len(text.split()) if text else 0
+
+        title_match = re.search(r"^Title:\s*(.+)$", text, re.MULTILINE)
+        extracted_title = title_match.group(1).strip() if title_match else url
+
+        return {
+            "status": "success",
+            "source_type": "url",
+            "title": extracted_title,
+            "content": text,
+            "url": url,
+            "has_transcript": False,
+            "word_count": words,
+        }
 

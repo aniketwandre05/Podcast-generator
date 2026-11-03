@@ -40,10 +40,24 @@ class SpeakerConfig(BaseModel):
     pace: float = 1.0
     language_code: str = "en-IN"
 
+class SourceItem(BaseModel):
+    id: Optional[str] = None
+    source_type: str = "text" # file, url, youtube, text
+    title: str
+    content: str = ""
+    file_type: Optional[str] = None # pdf, docx, txt, md
+    file_size: Optional[int] = 0
+    word_count: Optional[int] = 0
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+class ExtractUrlRequest(BaseModel):
+    url: str
+
 class EpisodeCreateRequest(BaseModel):
     topic: str
-    source_type: str = "prompt" # prompt, document, url
+    source_type: str = "prompt" # prompt, document, url, multi_source
     source_content: Optional[str] = ""
+    sources: Optional[List[SourceItem]] = Field(default_factory=list)
     language: str = "en-IN"
     dialogue_style: str = "code_mixed" # code_mixed, native, english_indian, bilingual
     tone: str = "casual" # casual, educational, debate, interview, storytelling, news-brief
@@ -60,6 +74,7 @@ class EpisodeResponse(BaseModel):
     description: str
     topic: str
     source_type: str
+    sources: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
     language: str
     dialogue_style: Optional[str] = "code_mixed"
     tone: str

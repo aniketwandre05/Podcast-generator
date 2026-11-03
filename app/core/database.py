@@ -20,4 +20,21 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    
+    # Auto-migrate SQLite missing columns if table already existed
+    if "sqlite" in settings.DATABASE_URL:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            try:
+                result = conn.execute(text("PRAGMA table_info(episodes)"))
+                existing_cols = {row[1] for row in result.fetchall()}
+                
+                if "dialogue_style" not in existing_cols:
+                    conn.execute(text("ALTER TABLE episodes ADD COLUMN dialogue_style VARCHAR(50) DEFAULT 'code_mixed'"))
+                if "sources" not in existing_cols:
+                    conn.execute(text("ALTER TABLE episodes ADD COLUMN sources TEXT DEFAULT '[]'"))
+                conn.commit()
+            except Exception as e:
+                # Table might not exist yet or already updated
+                pass
 
