@@ -76,16 +76,17 @@ def mix_podcast_episode(
     current_time_s += 1.0
 
     voice_master = np.concatenate(stitched_blocks)
+    del stitched_blocks
     total_samples = len(voice_master)
     total_duration = total_samples / float(target_framerate)
 
-    # 3. Background Music Mixing & Ducking
+    # 3. Background Music Mixing & Ducking (Memory-optimized in-place processing)
     if music_track_name and music_track_name != "none":
         music_audio = load_music_track(music_track_name, target_framerate)
         if music_audio is not None and len(music_audio) > 0:
             # Loop music to cover the whole episode
             reps = int(np.ceil(total_samples / len(music_audio)))
-            full_music = np.tile(music_audio, reps)[:total_samples]
+            full_music = np.tile(music_audio, reps)[:total_samples].astype(np.float32)
             
             # Compute speech presence envelope (envelope smoothing)
             # Use downsampled envelope for ultra-fast convolution (1000x faster than full-rate convolution on cloud CPUs)
@@ -94,37 +95,49 @@ def mix_podcast_episode(
             sub_kernel_size = max(3, int((target_framerate * 0.3) / downsample_factor))
             kernel = np.ones(sub_kernel_size, dtype=np.float32) / float(sub_kernel_size)
             sub_speech_env = np.convolve(downsampled_voice, kernel, mode="same")
+            del downsampled_voice
             
             # Upsample back to match total_samples
             speech_env = np.repeat(sub_speech_env, downsample_factor)[:total_samples]
+            del sub_speech_env
             if len(speech_env) < total_samples:
                 speech_env = np.pad(speech_env, (0, total_samples - len(speech_env)), mode="edge")
             
-            max_env = np.max(speech_env) + 1e-6
+            max_env = float(np.max(speech_env) + 1e-6)
             speech_presence = np.clip(speech_env / (max_env * 0.2), 0.0, 1.0)
+            del speech_env
             
             # Ducking: when speech is present, music drops to 20% of its normal level
             duck_curve = 1.0 - (0.80 * speech_presence)
+            del speech_presence
             
-            # Intro fade-in (first 1.5s) & Outro fade-out (last 2s)
+            # Apply volume & ducking directly to full_music in-place to avoid array allocations
+            full_music *= (float(music_volume) * duck_curve)
+            del duck_curve
+            
+            # Intro fade-in (first 1.5s) & Outro fade-out (last 2s) in-place
             fade_in_len = min(int(target_framerate * 1.5), total_samples)
             fade_out_len = min(int(target_framerate * 2.5), total_samples)
+            if fade_in_len > 0:
+                full_music[:fade_in_len] *= np.linspace(0.0, 1.0, fade_in_len, dtype=np.float32)
+            if fade_out_len > 0:
+                full_music[-fade_out_len:] *= np.linspace(1.0, 0.0, fade_out_len, dtype=np.float32)
             
-            fade_envelope = np.ones(total_samples, dtype=np.float32)
-            fade_envelope[:fade_in_len] = np.linspace(0.0, 1.0, fade_in_len)
-            fade_envelope[-fade_out_len:] = np.linspace(1.0, 0.0, fade_out_len)
+            # Mix voice + music in-place into voice_master (no extra 40MB array allocation)
+            voice_master += full_music
+            del full_music
             
-            final_music = full_music * music_volume * duck_curve * fade_envelope
-            
-            # Mix voice + music
-            master_mix = voice_master + final_music
-            # Master normalization to avoid clipping
-            master_mix = normalize_loudness(master_mix, target_peak=0.92)
+            # Master normalization in-place
+            master_mix = normalize_loudness(voice_master, target_peak=0.92)
         else:
             master_mix = voice_master
     else:
         master_mix = voice_master
 
     master_wav_bytes = write_wav_bytes(master_mix, target_framerate)
+    del master_mix
+    import gc
+    gc.collect()
+
     return master_wav_bytes, turn_timestamps, total_duration
 

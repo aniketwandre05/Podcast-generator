@@ -299,6 +299,10 @@ async def run_full_podcast_pipeline(episode_id: str):
             music_track_name=background_music,
             music_volume=music_volume,
         )
+        del turn_audio_list
+        del turn_results
+        import gc
+        gc.collect()
 
         # Save master audio files
         ep_dir = settings.STORAGE_DIR / episode_id
@@ -430,6 +434,10 @@ async def regenerate_episode_audio(episode_id: str):
             music_track_name=background_music,
             music_volume=music_volume,
         )
+        del turn_audio_list
+        del turn_results
+        import gc
+        gc.collect()
 
         ep_dir = settings.STORAGE_DIR / episode_id
         ep_dir.mkdir(parents=True, exist_ok=True)

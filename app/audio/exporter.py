@@ -105,7 +105,30 @@ def generate_show_notes_markdown(
 """
 
 def convert_wav_to_mp3(wav_path: str, mp3_path: str, metadata: Optional[Dict[str, str]] = None) -> bool:
-    """Convert WAV to MP3 with optional ID3 metadata tags using pydub/mutagen."""
+    """Convert WAV to MP3 using ffmpeg CLI (streaming, lowest memory footprint) with pydub fallback."""
+    import os
+    import shutil
+    import subprocess
+    
+    # 1. Prefer ffmpeg CLI: streams directly file-to-file with <15MB RAM footprint
+    if shutil.which("ffmpeg"):
+        try:
+            cmd = ["ffmpeg", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame", "-b:a", "192k"]
+            if metadata:
+                if metadata.get("title"):
+                    cmd.extend(["-metadata", f"title={metadata['title']}"])
+                if metadata.get("artist"):
+                    cmd.extend(["-metadata", f"artist={metadata['artist']}"])
+                if metadata.get("album"):
+                    cmd.extend(["-metadata", f"album={metadata['album']}"])
+            cmd.append(str(mp3_path))
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+            if res.returncode == 0 and os.path.exists(mp3_path):
+                return True
+        except Exception as e:
+            logger.warning(f"ffmpeg CLI streaming conversion failed: {e}. Trying pydub fallback...")
+
+    # 2. Fallback to pydub if ffmpeg CLI binary is unavailable
     try:
         from pydub import AudioSegment
         seg = AudioSegment.from_wav(wav_path)
@@ -118,6 +141,9 @@ def convert_wav_to_mp3(wav_path: str, mp3_path: str, metadata: Optional[Dict[str
                 "comments": metadata.get("description", ""),
             }
         seg.export(mp3_path, format="mp3", bitrate="192k", tags=tags)
+        del seg
+        import gc
+        gc.collect()
         return True
     except Exception as e:
         logger.warning(f"Could not convert to MP3 ({e}). WAV master remains available.")
